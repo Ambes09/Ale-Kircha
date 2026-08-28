@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-// Pages (we'll create these)
+// Pages
 import HomePage from './pages/HomePage';
 import KirchaPage from './pages/KirchaPage';
 import GroupDetailPage from './pages/GroupDetailPage';
@@ -15,17 +15,6 @@ import RegistrationPage from './pages/RegistrationPage';
 const queryClient = new QueryClient();
 
 function App() {
-  const [isTelegram, setIsTelegram] = useState(false);
-
-  useEffect(() => {
-    // Check if running in Telegram WebApp
-    if (window.Telegram?.WebApp) {
-      setIsTelegram(true);
-      window.Telegram.WebApp.ready();
-      window.Telegram.WebApp.expand();
-    }
-  }, []);
-
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
