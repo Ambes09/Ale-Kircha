@@ -1,10 +1,10 @@
 # ============================================================
-# RENDER DEPLOYMENT - FREE TIER
+# RENDER DEPLOYMENT - FREE TIER (No Workers)
 # ============================================================
 
 services:
   # ----------------------------------------------------------
-  # API Service (Web) - FREE
+  # API Service (Web)
   # ----------------------------------------------------------
   - type: web
     name: ale-kircha-api
@@ -45,9 +45,9 @@ services:
           envVarKey: RENDER_EXTERNAL_URL
 
   # ----------------------------------------------------------
-  # Customer Bot (Worker) - FREE
+  # Customer Bot (Web - Instead of Worker)
   # ----------------------------------------------------------
-  - type: worker
+  - type: web
     name: ale-kircha-customer-bot
     runtime: node
     plan: free
@@ -64,9 +64,9 @@ services:
           envVarKey: RENDER_EXTERNAL_URL
 
   # ----------------------------------------------------------
-  # Admin Bot (Worker) - FREE
+  # Admin Bot (Web - Instead of Worker)
   # ----------------------------------------------------------
-  - type: worker
+  - type: web
     name: ale-kircha-admin-bot
     runtime: node
     plan: free
@@ -85,7 +85,7 @@ services:
           envVarKey: RENDER_EXTERNAL_URL
 
 # ----------------------------------------------------------
-# PostgreSQL Database - FREE (Limit: 1 free DB)
+# PostgreSQL Database (Free)
 # ----------------------------------------------------------
 databases:
   - name: ale-kircha-db
