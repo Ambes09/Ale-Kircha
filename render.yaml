@@ -1,15 +1,15 @@
 # ============================================================
-# RENDER DEPLOYMENT CONFIGURATION
+# RENDER DEPLOYMENT - FREE TIER
 # ============================================================
 
 services:
   # ----------------------------------------------------------
-  # API Service (Web)
+  # API Service (Web) - FREE
   # ----------------------------------------------------------
   - type: web
     name: ale-kircha-api
     runtime: node
-    plan: starter
+    plan: free
     rootDir: apps/api
     buildCommand: npm install && npm run build
     startCommand: node dist/server.js
@@ -21,7 +21,7 @@ services:
       - key: NODE_ENV
         value: production
       - key: PORT
-        value: 4000
+        value: 10000
       - key: CUSTOMER_BOT_TOKEN
         sync: false
       - key: ADMIN_BOT_TOKEN
@@ -31,21 +31,26 @@ services:
       - key: JWT_SECRET
         generateValue: true
       - key: CORS_ORIGINS
-        value: https://ale-kircha.vercel.app,https://ale-kircha-web.onrender.com
+        value: https://ale-kircha.vercel.app
       - key: TELEGRAM_MODE
         value: webhook
       - key: PAYMENT_ADVICE_MAX_SIZE
         value: "5242880"
       - key: DEFAULT_PAYMENT_DEADLINE_MINUTES
         value: "30"
+      - key: API_URL
+        fromService:
+          name: ale-kircha-api
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
 
   # ----------------------------------------------------------
-  # Customer Bot (Worker)
+  # Customer Bot (Worker) - FREE
   # ----------------------------------------------------------
   - type: worker
     name: ale-kircha-customer-bot
     runtime: node
-    plan: starter
+    plan: free
     rootDir: apps/customer-bot
     buildCommand: npm install && npm run build
     startCommand: node dist/bot.js
@@ -59,12 +64,12 @@ services:
           envVarKey: RENDER_EXTERNAL_URL
 
   # ----------------------------------------------------------
-  # Admin Bot (Worker)
+  # Admin Bot (Worker) - FREE
   # ----------------------------------------------------------
   - type: worker
     name: ale-kircha-admin-bot
     runtime: node
-    plan: starter
+    plan: free
     rootDir: apps/admin-bot
     buildCommand: npm install && npm run build
     startCommand: node dist/bot.js
@@ -80,10 +85,10 @@ services:
           envVarKey: RENDER_EXTERNAL_URL
 
 # ----------------------------------------------------------
-# PostgreSQL Database
+# PostgreSQL Database - FREE (Limit: 1 free DB)
 # ----------------------------------------------------------
 databases:
   - name: ale-kircha-db
     databaseName: ale_kircha
     user: ale
-    plan: starter
+    plan: free
