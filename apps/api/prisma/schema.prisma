@@ -1,0 +1,633 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ================================================================
+// USER & CUSTOMER
+// ================================================================
+
+model User {
+  id            String    @id @default(cuid())
+  telegramId    String    @unique
+  username      String?
+  firstName     String
+  lastName      String?
+  phone         String?   @unique
+  role          String    @default("CUSTOMER")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  customer      Customer?
+  legalAcceptances UserLegalAcceptance[]
+}
+
+model Customer {
+  id                String    @id @default(cuid())
+  userId            String    @unique
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fullName          String
+  additionalPhone   String?
+  preferredLanguage String    @default("en")
+  registrationDate  DateTime  @default(now())
+  status            String    @default("ACTIVE")
+
+  addresses         CustomerAddress[]
+  orders            Order[]
+  groupMemberships  KirchaGroupMembership[]
+  paymentAdvices    PaymentAdvice[]
+  notifications     Notification[]
+  supportRequests   SupportRequest[]
+  legalAcceptances  UserLegalAcceptance[]
+  refundRequests    RefundRequest[]
+  createdGroups     KirchaGroup[]
+  complaints        Complaint[]
+}
+
+model CustomerAddress {
+  id           String   @id @default(cuid())
+  customerId   String
+  customer     Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  city         String
+  subCity      String?
+  woreda       String?
+  houseNumber  String?
+  landmark     String?
+  directions   String?
+  latitude     Float?
+  longitude    Float?
+  isDefault    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  orders       Order[]
+}
+
+// ================================================================
+// KIRCHA
+// ================================================================
+
+model KirchaType {
+  id            String   @id @default(cuid())
+  code          String   @unique
+  nameEn        String
+  nameAm        String
+  descriptionEn String?
+  descriptionAm String?
+  imageUrl      String?
+  icon          String?
+  active        Boolean  @default(true)
+  displayOrder  Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  groups        KirchaGroup[]
+}
+
+model KirchaGroup {
+  id                String   @id @default(cuid())
+  groupCode         String   @unique
+  kirchaTypeId      String
+  kirchaType        KirchaType @relation(fields: [kirchaTypeId], references: [id])
+
+  nameEn            String
+  nameAm            String
+  descriptionEn     String?
+  descriptionAm     String?
+  status            String    @default("DRAFT")
+
+  totalCapacity     Float    @default(0)
+  reservedQuantity  Float    @default(0)
+  soldQuantity      Float    @default(0)
+
+  unitPrice         Float    @default(0)
+  halfPrice         Float?
+  quarterPrice      Float?
+  deliveryFee       Float    @default(0)
+  discount          Float    @default(0)
+  tax               Float    @default(0)
+  additionalFees    Float    @default(0)
+
+  registrationOpenAt  DateTime
+  registrationCloseAt DateTime
+  slaughterDate       DateTime?
+  slaughterTime       String?
+  slaughterLocation   String?
+  processingDate      DateTime?
+  deliveryDate        DateTime?
+  deliveryTimeStart   String?
+  deliveryTimeEnd     String?
+  deliveryArea        String?
+
+  minQuantity       Float    @default(0.25)
+  maxQuantity       Float    @default(3)
+  quantityStep      Float    @default(0.25)
+  allowHalfShare    Boolean  @default(true)
+  allowQuarterShare Boolean  @default(true)
+
+  expiryDate        DateTime?
+  autoExpire        Boolean  @default(false)
+  minMembersRequired Int      @default(2)
+  maxMembersAllowed  Int      @default(10)
+
+  createdBy         String?
+  createdByCustomerId String?
+  createdByCustomer Customer? @relation(fields: [createdByCustomerId], references: [id])
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  closedAt          DateTime?
+
+  images            KirchaGroupImage[]
+  memberships       KirchaGroupMembership[]
+  orders            Order[]
+}
+
+model KirchaGroupImage {
+  id          String   @id @default(cuid())
+  groupId     String
+  group       KirchaGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  storageKey  String
+  url         String
+  mimeType    String
+  size        Int
+  isPrimary   Boolean  @default(false)
+  displayOrder Int     @default(0)
+  createdAt   DateTime @default(now())
+}
+
+model KirchaGroupMembership {
+  id                String   @id @default(cuid())
+  groupId           String
+  group             KirchaGroup @relation(fields: [groupId], references: [id])
+  customerId        String
+  customer          Customer @relation(fields: [customerId], references: [id])
+
+  portionType       String   @default("FULL")
+  quantity          Float
+  unitPrice         Float
+  subtotal          Float
+  discount          Float
+  deliveryFee       Float
+  additionalFees    Float
+  tax               Float
+  totalAmount       Float
+
+  reservationStatus String   @default("PENDING")
+  paymentStatus     String   @default("UNPAID")
+  orderStatus       String   @default("DRAFT")
+
+  joinedAt          DateTime  @default(now())
+  confirmedAt       DateTime?
+  cancelledAt       DateTime?
+  expiresAt         DateTime?
+
+  orders            Order[]
+  refundRequests    RefundRequest[]
+}
+
+// ================================================================
+// ORDERS
+// ================================================================
+
+model Order {
+  id                    String   @id @default(cuid())
+  orderNumber           String   @unique
+  customerId            String
+  customer              Customer @relation(fields: [customerId], references: [id])
+  groupId               String?
+  group                 KirchaGroup? @relation(fields: [groupId], references: [id])
+  membershipId          String?
+  membership            KirchaGroupMembership? @relation(fields: [membershipId], references: [id])
+
+  quantity              Float
+  unitPrice             Float
+  subtotal              Float
+  discount              Float
+  discountType          String   @default("FIXED")
+  discountDescription   String?
+  serviceCharge         Float    @default(0)
+  serviceChargeType     String   @default("FIXED")
+  serviceChargeDescription String?
+  deliveryFee           Float    @default(0)
+  deliveryZone          String?
+  tax                   Float    @default(0)
+  taxRate               Float    @default(0)
+  additionalFees        Float    @default(0)
+  totalAmount           Float
+
+  status                String   @default("DRAFT")
+  createdBy             String?
+
+  deliveryAddressId     String?
+  deliveryAddress       CustomerAddress? @relation(fields: [deliveryAddressId], references: [id])
+  deliveryDate          DateTime?
+  deliveryTimeSlot      String?
+
+  paymentMethodId       String?
+  paymentMethod         PaymentMethod? @relation(fields: [paymentMethodId], references: [id])
+
+  expiryDate            DateTime?
+  isExpired             Boolean  @default(false)
+
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  cancelledAt           DateTime?
+  expiresAt             DateTime?
+
+  payment               Payment?
+  paymentAdvice         PaymentAdvice[]
+  delivery              Delivery?
+  refundRequests        RefundRequest[]
+}
+
+// ================================================================
+// PAYMENTS
+// ================================================================
+
+model PaymentMethod {
+  id             String   @id @default(cuid())
+  name           String   @unique
+  nameAm         String?
+  accountName    String
+  accountNumber  String
+  instructions   String?
+  instructionsAm String?
+  logoUrl        String?
+  active         Boolean  @default(true)
+  displayOrder   Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  payments       Payment[]
+  orders         Order[]
+}
+
+model Payment {
+  id                String   @id @default(cuid())
+  orderId           String   @unique
+  order             Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  amount            Float
+  paymentMethodId   String
+  paymentMethod     PaymentMethod @relation(fields: [paymentMethodId], references: [id])
+  status            String   @default("UNPAID")
+  adviceSubmittedAt DateTime?
+  verifiedAt        DateTime?
+  verifiedBy        String?
+  rejectionReason   String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  advices           PaymentAdvice[]
+}
+
+model PaymentAdvice {
+  id            String   @id @default(cuid())
+  paymentId     String
+  payment       Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  customerId    String
+  customer      Customer @relation(fields: [customerId], references: [id])
+  storageKey    String
+  url           String
+  mimeType      String
+  size          Int
+  uploadedAt    DateTime @default(now())
+  status        String   @default("SUBMITTED")
+  adminNote     String?
+  orderId       String?
+  order         Order?   @relation(fields: [orderId], references: [id])
+}
+
+// ================================================================
+// DELIVERY
+// ================================================================
+
+model Delivery {
+  id                String   @id @default(cuid())
+  orderId           String   @unique
+  order             Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  assignedTo        String?
+  assignedAt        DateTime?
+  pickedUpAt        DateTime?
+  outForDeliveryAt  DateTime?
+  deliveredAt       DateTime?
+  failedAt          DateTime?
+  status            String   @default("UNASSIGNED")
+  notes             String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+// ================================================================
+// FEES & CHARGES
+// ================================================================
+
+model FeeConfiguration {
+  id                String   @id @default(cuid())
+  key               String   @unique
+  type              String
+  nameEn            String
+  nameAm            String
+  descriptionEn     String?
+  descriptionAm     String?
+  valueType         String
+  value             Float    @default(0)
+  minValue          Float?
+  maxValue          Float?
+  isActive          Boolean  @default(true)
+  priority          Int      @default(0)
+  applyTo           String   @default("ALL")
+  applyToId         String?
+  startDate         DateTime?
+  endDate           DateTime?
+  createdBy         String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model DeliveryZone {
+  id                String   @id @default(cuid())
+  nameEn            String
+  nameAm            String
+  fee               Float    @default(0)
+  minOrder          Float    @default(0)
+  maxOrder          Float?
+  isActive          Boolean  @default(true)
+  priority          Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  deliveryCharges   DeliveryCharge[]
+}
+
+model ServiceCharge {
+  id                String   @id @default(cuid())
+  nameEn            String
+  nameAm            String
+  type              String
+  value             Float    @default(0)
+  descriptionEn     String?
+  descriptionAm     String?
+  applyTo           String   @default("ALL")
+  applyToId         String?
+  isActive          Boolean  @default(true)
+  priority          Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model DeliveryCharge {
+  id                String   @id @default(cuid())
+  zoneId            String?
+  zone              DeliveryZone? @relation(fields: [zoneId], references: [id])
+  baseFee           Float    @default(0)
+  perKmFee          Float    @default(0)
+  perKgFee          Float    @default(0)
+  minimumOrder      Float    @default(0)
+  maximumOrder      Float?
+  weightRangeStart  Float?
+  weightRangeEnd    Float?
+  distanceRangeStart Float?
+  distanceRangeEnd   Float?
+  isActive          Boolean  @default(true)
+  priority          Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+// ================================================================
+// REFUNDS
+// ================================================================
+
+model RefundRequest {
+  id                String   @id @default(cuid())
+  orderId           String
+  order             Order    @relation(fields: [orderId], references: [id])
+  customerId        String
+  customer          Customer @relation(fields: [customerId], references: [id])
+  membershipId      String?
+  membership        KirchaGroupMembership? @relation(fields: [membershipId], references: [id])
+  
+  originalAmount    Float
+  serviceCharge     Float    @default(0)
+  penaltyAmount     Float    @default(0)
+  refundAmount      Float
+  penaltyReason     String?
+  
+  bankName          String?
+  accountName       String?
+  accountNumber     String?
+  
+  status            String   @default("PENDING")
+  adminNote         String?
+  adminActionAt     DateTime?
+  completedAt       DateTime?
+  
+  paymentAdviceUrl  String?
+  
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  complaints        Complaint[]
+}
+
+model Complaint {
+  id                String   @id @default(cuid())
+  refundRequestId   String
+  refundRequest     RefundRequest @relation(fields: [refundRequestId], references: [id])
+  customerId        String
+  customer          Customer @relation(fields: [customerId], references: [id])
+  message           String
+  imageUrl          String?
+  status            String   @default("OPEN")
+  adminResponse     String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+// ================================================================
+// SYSTEM SETTINGS
+// ================================================================
+
+model SystemSetting {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       String
+  description String?
+  updatedAt   DateTime @updatedAt
+}
+
+// ================================================================
+// TERMS & PRIVACY
+// ================================================================
+
+model TermsVersion {
+  id            String   @id @default(cuid())
+  version       String   @unique
+  titleEn       String
+  titleAm       String
+  contentEn     String
+  contentAm     String
+  effectiveFrom DateTime @default(now())
+  isActive      Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  acceptances   UserLegalAcceptance[]
+}
+
+model PrivacyPolicyVersion {
+  id            String   @id @default(cuid())
+  version       String   @unique
+  contentEn     String
+  contentAm     String
+  effectiveFrom DateTime @default(now())
+  isActive      Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  acceptances   UserLegalAcceptance[]
+}
+
+model UserLegalAcceptance {
+  id                String   @id @default(cuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id])
+  customerId        String?
+  customer          Customer? @relation(fields: [customerId], references: [id])
+  termsVersionId    String
+  termsVersion      TermsVersion @relation(fields: [termsVersionId], references: [id])
+  privacyVersionId  String
+  privacyVersion    PrivacyPolicyVersion @relation(fields: [privacyVersionId], references: [id])
+  languageUsed      String   @default("en")
+  telegramUserId    String
+  ipAddress         String?
+  userAgent         String?
+  acceptedAt        DateTime @default(now())
+}
+
+// ================================================================
+// FAQ
+// ================================================================
+
+model FAQ {
+  id          String   @id @default(cuid())
+  order       Int      @default(0)
+  questionEn  String
+  questionAm  String
+  answerEn    String
+  answerAm    String
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ================================================================
+// NOTIFICATIONS
+// ================================================================
+
+model Notification {
+  id          String   @id @default(cuid())
+  customerId  String
+  customer    Customer @relation(fields: [customerId], references: [id])
+  type        String
+  title       String
+  body        String
+  data        String?
+  read        Boolean  @default(false)
+  sentAt      DateTime @default(now())
+  deliveredAt DateTime?
+}
+
+// ================================================================
+// SUPPORT
+// ================================================================
+
+model SupportRequest {
+  id          String   @id @default(cuid())
+  customerId  String
+  customer    Customer @relation(fields: [customerId], references: [id])
+  orderId     String?
+  category    String
+  message     String
+  status      String   @default("OPEN")
+  assignedTo  String?
+  resolvedAt  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ================================================================
+// BANNED USERS
+// ================================================================
+
+model BannedUser {
+  id          String   @id @default(cuid())
+  telegramId  String   @unique
+  reason      String?
+  bannedBy    String
+  bannedAt    DateTime @default(now())
+  expiresAt   DateTime?
+  active      Boolean  @default(true)
+  notes       String?
+}
+
+// ================================================================
+// BULK MESSAGES
+// ================================================================
+
+model BulkMessage {
+  id          String   @id @default(cuid())
+  title       String
+  message     String
+  target      String
+  targetId    String?
+  sentBy      String
+  sentAt      DateTime @default(now())
+  deliveredCount Int   @default(0)
+  failedCount     Int   @default(0)
+  status      String   @default("PENDING")
+}
+
+model BulkMessageRecipient {
+  id          String   @id @default(cuid())
+  messageId   String
+  customerId  String
+  deliveredAt DateTime?
+  readAt      DateTime?
+  status      String   @default("PENDING")
+}
+
+// ================================================================
+// AUDIT LOG
+// ================================================================
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorId     String
+  actorRole   String
+  actorName   String?
+  action      String
+  entity      String
+  entityId    String
+  before      String?
+  after       String?
+  ip          String?
+  userAgent   String?
+  metadata    String?
+  createdAt   DateTime @default(now())
+}
+
+// ================================================================
+// IDEMPOTENCY
+// ================================================================
+
+model IdempotencyKey {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  response    String
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+}

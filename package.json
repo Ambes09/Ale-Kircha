@@ -1,0 +1,37 @@
+{
+  "name": "ale-kircha",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Ale Kircha / አለ ቅርጫ - Meat Sharing Platform on Telegram",
+  "scripts": {
+    "build": "pnpm -r build",
+    "build:api": "cd apps/api && pnpm build",
+    "build:customer-bot": "cd apps/customer-bot && pnpm build",
+    "build:admin-bot": "cd apps/admin-bot && pnpm build",
+    "build:web": "cd apps/customer-web && pnpm build",
+    "build:all": "pnpm run build:api && pnpm run build:customer-bot && pnpm run build:admin-bot && pnpm run build:web",
+    "dev": "pnpm -r --parallel dev",
+    "dev:api": "pnpm --filter @ale/api dev",
+    "dev:customer-bot": "pnpm --filter @ale/customer-bot dev",
+    "dev:admin-bot": "pnpm --filter @ale/admin-bot dev",
+    "dev:web": "pnpm --filter @ale/customer-web dev",
+    "start:api": "cd apps/api && node dist/server.js",
+    "start:customer-bot": "cd apps/customer-bot && node dist/bot.js",
+    "start:admin-bot": "cd apps/admin-bot && node dist/bot.js",
+    "start": "pnpm run start:api",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test",
+    "clean": "pnpm -r clean && rm -rf node_modules",
+    "docker:build": "docker-compose build",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down",
+    "postinstall": "pnpm -r --filter @ale/api exec prisma generate || true"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@9.0.0",
+  "author": "Ambes09",
+  "license": "MIT"
+}

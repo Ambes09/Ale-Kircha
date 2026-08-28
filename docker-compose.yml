@@ -1,0 +1,94 @@
+version: '3.8'
+
+services:
+  # ============================================================
+  # PostgreSQL Database
+  # ============================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: siga-kircha-postgres
+    environment:
+      POSTGRES_USER: siga
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-sigapass}
+      POSTGRES_DB: siga_kircha
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U siga"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ============================================================
+  # API Service
+  # ============================================================
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: siga-kircha-api
+    environment:
+      DATABASE_URL: postgresql://siga:${DB_PASSWORD:-sigapass}@postgres:5432/siga_kircha?schema=public
+      NODE_ENV: production
+      PORT: 4000
+      CUSTOMER_BOT_TOKEN: ${CUSTOMER_BOT_TOKEN}
+      ADMIN_BOT_TOKEN: ${ADMIN_BOT_TOKEN}
+      ADMIN_TELEGRAM_IDS: ${ADMIN_TELEGRAM_IDS}
+      JWT_SECRET: ${JWT_SECRET}
+      API_URL: ${API_URL}
+      APP_URL: ${APP_URL}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      S3_ENDPOINT: ${S3_ENDPOINT}
+      S3_REGION: ${S3_REGION}
+      S3_BUCKET: ${S3_BUCKET}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+      TELEGRAM_MODE: webhook
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "4000:4000"
+    command: ["node", "apps/api/dist/server.js"]
+    restart: unless-stopped
+
+  # ============================================================
+  # Customer Bot
+  # ============================================================
+  customer-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: siga-kircha-customer-bot
+    environment:
+      API_URL: http://api:4000
+      CUSTOMER_BOT_TOKEN: ${CUSTOMER_BOT_TOKEN}
+    depends_on:
+      api:
+        condition: service_started
+    command: ["node", "apps/customer-bot/dist/bot.js"]
+    restart: unless-stopped
+
+  # ============================================================
+  # Admin Bot
+  # ============================================================
+  admin-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: siga-kircha-admin-bot
+    environment:
+      API_URL: http://api:4000
+      ADMIN_BOT_TOKEN: ${ADMIN_BOT_TOKEN}
+      ADMIN_TELEGRAM_IDS: ${ADMIN_TELEGRAM_IDS}
+    depends_on:
+      api:
+        condition: service_started
+    command: ["node", "apps/admin-bot/dist/bot.js"]
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

@@ -1,0 +1,61 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+package-lock.json
+pnpm-lock.yaml
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Environment files (CRITICAL - DO NOT COMMIT)
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# Database
+*.db
+*.db-journal
+prisma/*.db
+prisma/*.db-journal
+prisma/migrations/*.sqlite
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+uploads/
+
+# Secrets
+*.pem
+*.key
+*.crt
+
+# Audit
+audit_report.json
+
+# Local config
+*.local

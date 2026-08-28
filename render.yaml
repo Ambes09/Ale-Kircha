@@ -1,0 +1,130 @@
+# ============================================================
+# RENDER DEPLOYMENT CONFIGURATION
+# ============================================================
+
+services:
+  # ----------------------------------------------------------
+  # API Service
+  # ----------------------------------------------------------
+  - type: web
+    name: ale-kircha-api
+    runtime: node
+    plan: starter
+    buildCommand: |
+      npm install -g pnpm@9.0.0
+      pnpm install
+      cd apps/api && pnpm run build
+    startCommand: cd apps/api && pnpm run start
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ale-kircha-db
+          property: connectionString
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 4000
+      - key: CUSTOMER_BOT_TOKEN
+        sync: false
+      - key: ADMIN_BOT_TOKEN
+        sync: false
+      - key: ADMIN_TELEGRAM_IDS
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: API_URL
+        fromService:
+          name: ale-kircha-api
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: APP_URL
+        fromService:
+          name: ale-kircha-web
+          type: static
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: CORS_ORIGINS
+        fromService:
+          name: ale-kircha-web
+          type: static
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: TELEGRAM_MODE
+        value: webhook
+      - key: PAYMENT_ADVICE_MAX_SIZE
+        value: "5242880"
+      - key: DEFAULT_PAYMENT_DEADLINE_MINUTES
+        value: "30"
+
+  # ----------------------------------------------------------
+  # Customer Bot (Worker)
+  # ----------------------------------------------------------
+  - type: worker
+    name: ale-kircha-customer-bot
+    runtime: node
+    plan: starter
+    buildCommand: |
+      npm install -g pnpm@9.0.0
+      pnpm install
+      cd apps/customer-bot && pnpm run build
+    startCommand: cd apps/customer-bot && pnpm run start
+    envVars:
+      - key: CUSTOMER_BOT_TOKEN
+        sync: false
+      - key: API_URL
+        fromService:
+          name: ale-kircha-api
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
+
+  # ----------------------------------------------------------
+  # Admin Bot (Worker)
+  # ----------------------------------------------------------
+  - type: worker
+    name: ale-kircha-admin-bot
+    runtime: node
+    plan: starter
+    buildCommand: |
+      npm install -g pnpm@9.0.0
+      pnpm install
+      cd apps/admin-bot && pnpm run build
+    startCommand: cd apps/admin-bot && pnpm run start
+    envVars:
+      - key: ADMIN_BOT_TOKEN
+        sync: false
+      - key: ADMIN_TELEGRAM_IDS
+        sync: false
+      - key: API_URL
+        fromService:
+          name: ale-kircha-api
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
+
+  # ----------------------------------------------------------
+  # Web App (Static)
+  # ----------------------------------------------------------
+  - type: static
+    name: ale-kircha-web
+    runtime: static
+    buildCommand: |
+      npm install -g pnpm@9.0.0
+      pnpm install
+      cd apps/customer-web && pnpm run build
+    staticPublishPath: apps/customer-web/dist
+    headers:
+      - path: /*
+        name: Cache-Control
+        value: public, max-age=31536000
+    envVars:
+      - key: VITE_API_URL
+        fromService:
+          name: ale-kircha-api
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
+
+# ----------------------------------------------------------
+# PostgreSQL Database
+# ----------------------------------------------------------
+databases:
+  - name: ale-kircha-db
+    databaseName: ale_kircha
+    user: ale
+    plan: starter
