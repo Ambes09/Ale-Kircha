@@ -5,8 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node --import tsx --watch src/server.ts",
-    "start": "node --import tsx src/server.js",
-    "postinstall": "npx prisma@5.22.0 generate"
+    "start": "node --import tsx src/server.js"
   },
   "dependencies": {
     "@prisma/client": "5.22.0",
