@@ -5,11 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "node --import tsx --watch src/server.ts",
-    "build": "echo 'No build needed'",
     "start": "node --import tsx src/server.ts",
-    "migrate": "prisma migrate deploy",
-    "seed": "node prisma/seed.js",
-    "generate": "prisma generate"
+    "postinstall": "npx prisma generate"
   },
   "dependencies": {
     "@prisma/client": "5.22.0",
