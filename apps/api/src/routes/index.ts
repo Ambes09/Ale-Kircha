@@ -11,6 +11,7 @@ import { faqRoutes } from './faqRoutes.js';
 import { termsRoutes } from './termsRoutes.js';
 import { feeRoutes } from './feeRoutes.js';
 import { paymentRoutes } from './paymentRoutes.js';
+import { webhookRoutes } from './webhookRoutes.js';
 import { AddressController } from '../controllers/addressController.js';
 import { NotificationController } from '../controllers/notificationController.js';
 import { SupportController } from '../controllers/supportController.js';
@@ -98,6 +99,9 @@ export async function routes(fastify: FastifyInstance) {
 
   // Fee Routes
   await fastify.register(feeRoutes);
+
+  // Webhook Routes
+  await fastify.register(webhookRoutes);
 
   // Report Routes
   fastify.get('/api/v1/admin/reports/sales', { preHandler: requireAdmin }, reportController.getSalesReport.bind(reportController));
