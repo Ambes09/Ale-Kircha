@@ -1,4 +1,4 @@
-import { Bot, session, Context, InlineKeyboard } from 'grammy';
+import { Bot, session, Context } from 'grammy';
 import { conversations, type ConversationFlavor } from '@grammyjs/conversations';
 import { type SessionFlavor } from 'grammy';
 import dotenv from 'dotenv';

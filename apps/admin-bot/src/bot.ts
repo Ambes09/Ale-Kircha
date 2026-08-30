@@ -1,4 +1,4 @@
-import { Bot, session, Context, InlineKeyboard } from 'grammy';
+import { Bot, session, Context } from 'grammy';
 import { conversations, type ConversationFlavor } from '@grammyjs/conversations';
 import { type SessionFlavor } from 'grammy';
 import dotenv from 'dotenv';
@@ -73,19 +73,6 @@ function formatCurrency(amount: number): string {
   return `${amount.toLocaleString()} ETB`;
 }
 
-function getStatusEmoji(status: string): string {
-  const map: Record<string, string> = {
-    'OPEN': '🟢', 'DRAFT': '📝', 'FULL': '🔴', 'CLOSED': '🔒',
-    'COMPLETED': '✅', 'CANCELLED': '❌', 'EXPIRED': '⏰',
-    'PAID': '✅', 'UNPAID': '⚠️', 'PENDING': '⏳', 'REJECTED': '❌',
-    'ACTIVE': '🟢', 'INACTIVE': '⚪', 'BLOCKED': '🚫',
-    'PAYMENT_REVIEW': '👀', 'PAYMENT_CONFIRMED': '✅',
-    'PROCESSING': '🔄', 'READY_FOR_DELIVERY': '📦',
-    'OUT_FOR_DELIVERY': '🚚', 'DELIVERED': '🏠',
-  };
-  return map[status] || '📌';
-}
-
 // ==================== COMMANDS ====================
 
 bot.command('start', async (ctx) => {
@@ -96,106 +83,28 @@ bot.command('start', async (ctx) => {
   await showDashboard(ctx);
 });
 
-bot.command('menu', async (ctx) => {
-  if (!await isAdmin(ctx)) {
-    await ctx.reply('⛔ Unauthorized.');
-    return;
-  }
-  await showDashboard(ctx);
-});
-
 // ==================== DASHBOARD ====================
 
 async function showDashboard(ctx: MyContext) {
-  const keyboard = new InlineKeyboard()
-    .text('📊 Stats', 'admin_stats')
-    .text('🛒 Groups', 'admin_groups')
-    .row()
-    .text('📦 Orders', 'admin_orders')
-    .text('💳 Payments', 'admin_payments')
-    .row()
-    .text('👥 Users', 'admin_users')
-    .text('📈 Reports', 'admin_reports')
-    .row()
-    .text('⚙️ Settings', 'admin_settings')
-    .text('🔄 Refresh', 'admin_refresh');
-
   await ctx.reply(
     '🏗️ *ALE KIRCHA ADMIN*\n━━━━━━━━━━━━━━━━━━━━━━\n\nWelcome to the Admin Dashboard!',
     {
       parse_mode: 'Markdown',
-      reply_markup: keyboard,
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '📊 Stats', callback_data: 'admin_stats' }],
+          [{ text: '🛒 Groups', callback_data: 'admin_groups' }],
+          [{ text: '📦 Orders', callback_data: 'admin_orders' }],
+          [{ text: '💳 Payments', callback_data: 'admin_payments' }],
+          [{ text: '👥 Users', callback_data: 'admin_users' }],
+          [{ text: '📈 Reports', callback_data: 'admin_reports' }],
+          [{ text: '⚙️ Settings', callback_data: 'admin_settings' }],
+          [{ text: '🔄 Refresh', callback_data: 'admin_refresh' }],
+        ],
+      },
     }
   );
 }
-
-// ==================== CALLBACKS ====================
-
-bot.callbackQuery('admin_stats', async (ctx) => {
-  if (!await isAdmin(ctx)) {
-    await ctx.answerCallbackQuery('⛔ Unauthorized');
-    return;
-  }
-  await ctx.answerCallbackQuery();
-  try {
-    const data = await apiCall('/api/v1/admin/stats', {}, ctx);
-    const stats = data.success ? data.data : { pendingPayments: 0, pendingOrders: 0, activeGroups: 0, totalCustomers: 0, todayRevenue: 0 };
-    await ctx.reply(
-      `📊 *SYSTEM STATISTICS*\n━━━━━━━━━━━━━━━━━━━━━━\n\n` +
-      `💳 Pending Payments: ${stats.pendingPayments}\n` +
-      `📦 Pending Orders: ${stats.pendingOrders}\n` +
-      `🛒 Active Groups: ${stats.activeGroups}\n` +
-      `👥 Total Customers: ${stats.totalCustomers}\n` +
-      `💰 Today\'s Revenue: ${formatCurrency(stats.todayRevenue)}`,
-      { parse_mode: 'Markdown' }
-    );
-  } catch (error) {
-    await ctx.reply('❌ Error fetching stats.');
-  }
-});
-
-bot.callbackQuery('admin_back', async (ctx) => {
-  if (!await isAdmin(ctx)) {
-    await ctx.answerCallbackQuery('⛔ Unauthorized');
-    return;
-  }
-  await ctx.answerCallbackQuery();
-  await showDashboard(ctx);
-});
-
-bot.callbackQuery('admin_refresh', async (ctx) => {
-  if (!await isAdmin(ctx)) {
-    await ctx.answerCallbackQuery('⛔ Unauthorized');
-    return;
-  }
-  await ctx.answerCallbackQuery('🔄 Refreshing...');
-  await showDashboard(ctx);
-});
-
-// ==================== GROUPS ====================
-
-bot.callbackQuery('admin_groups', async (ctx) => {
-  if (!await isAdmin(ctx)) {
-    await ctx.answerCallbackQuery('⛔ Unauthorized');
-    return;
-  }
-  await ctx.answerCallbackQuery();
-  try {
-    const data = await apiCall('/api/v1/kircha/groups', {}, ctx);
-    let message = '🛒 *Groups*\n\n';
-    if (data.success && data.data && data.data.length > 0) {
-      for (const group of data.data) {
-        const available = group.totalCapacity - group.reservedQuantity - group.soldQuantity;
-        message += `*${group.nameEn}*\n📦 ${available}/${group.totalCapacity}\n💰 ${formatCurrency(group.unitPrice)}\n📌 ${group.status}\n\n`;
-      }
-    } else {
-      message += 'No groups found.';
-    }
-    await ctx.reply(message, { parse_mode: 'Markdown' });
-  } catch (error) {
-    await ctx.reply('❌ Error fetching groups.');
-  }
-});
 
 // ==================== START ====================
 
