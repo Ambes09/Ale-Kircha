@@ -2,11 +2,8 @@
   "version": 2,
   "builds": [
     {
-      "src": "apps/customer-web/package.json",
-      "use": "@vercel/static-build",
-      "config": {
-        "distDir": "apps/customer-web/dist"
-      }
+      "src": "apps/customer-web/**",
+      "use": "@vercel/static"
     }
   ],
   "routes": [
@@ -14,8 +11,5 @@
       "src": "/(.*)",
       "dest": "/apps/customer-web/dist/$1"
     }
-  ],
-  "env": {
-    "VITE_API_URL": "https://ale-kircha-kb3m.onrender.com"
-  }
+  ]
 }
