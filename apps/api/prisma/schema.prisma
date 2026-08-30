@@ -7,5 +7,4 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// The rest of your schema remains the same...
-// (Copy your existing model definitions here)
+// ... (rest of your existing schema models)
