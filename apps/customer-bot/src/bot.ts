@@ -1,7 +1,7 @@
 import { Bot, session, Context } from 'grammy';
-import { conversations, type ConversationFlavor } from '@grammyjs/conversations';
-import { type SessionFlavor } from 'grammy';
+import { conversations } from '@grammyjs/conversations';
 import dotenv from 'dotenv';
+import http from 'http';
 
 dotenv.config();
 
@@ -12,23 +12,12 @@ if (!BOT_TOKEN) {
   process.exit(1);
 }
 
-// Define session type
-interface SessionData {
-  language: string;
-  step: string;
-  isRegistered: boolean;
-  customerId: string | null;
-  data: Record<string, any>;
-}
+const bot = new Bot(BOT_TOKEN);
 
-// Create bot with session type
-type MyContext = Context & SessionFlavor<SessionData> & ConversationFlavor;
+// ==================== SESSION ====================
 
-const bot = new Bot<MyContext>(BOT_TOKEN);
-
-// Session middleware
 bot.use(session({
-  initial: (): SessionData => ({
+  initial: () => ({
     language: 'en',
     step: 'start',
     isRegistered: false,
@@ -37,27 +26,18 @@ bot.use(session({
   }),
 }));
 
-// Conversations middleware
 bot.use(conversations());
 
 // ==================== HELPERS ====================
 
-async function apiCall(endpoint: string, options: any = {}, ctx?: MyContext) {
-  const headers: any = {
-    'Content-Type': 'application/json',
-    ...options.headers,
-  };
-  if (ctx?.from?.id) {
-    headers['x-telegram-id'] = ctx.from.id.toString();
-  }
-  const response = await fetch(`${API_URL}${endpoint}`, {
-    ...options,
-    headers,
-  });
+async function apiCall(endpoint: string, options: any = {}, ctx?: Context) {
+  const headers: any = { 'Content-Type': 'application/json', ...options.headers };
+  if (ctx?.from?.id) headers['x-telegram-id'] = ctx.from.id.toString();
+  const response = await fetch(`${API_URL}${endpoint}`, { ...options, headers });
   return response.json();
 }
 
-async function checkUserRegistration(ctx: MyContext): Promise<boolean> {
+async function checkUserRegistration(ctx: Context): Promise<boolean> {
   if (ctx.session.isRegistered && ctx.session.customerId) return true;
   try {
     const data = await apiCall('/api/v1/customers/me', {}, ctx);
@@ -71,16 +51,6 @@ async function checkUserRegistration(ctx: MyContext): Promise<boolean> {
   return false;
 }
 
-function formatDate(date: string): string {
-  return new Date(date).toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
-
 function formatCurrency(amount: number): string {
   return `${amount.toLocaleString()} ETB`;
 }
@@ -90,18 +60,14 @@ function formatCurrency(amount: number): string {
 bot.command('start', async (ctx) => {
   const isRegistered = await checkUserRegistration(ctx);
   const firstName = ctx.from?.first_name || 'Customer';
-  
   if (isRegistered) {
     await ctx.reply(`👋 Welcome back to Ale Kircha, ${firstName}!`, {
       reply_markup: {
-        inline_keyboard: [
-          [{ text: '📋 Main Menu', callback_data: 'show_menu' }],
-        ],
+        inline_keyboard: [[{ text: '📋 Main Menu', callback_data: 'show_menu' }]],
       },
     });
     return;
   }
-  
   await ctx.reply(`👋 Welcome to Ale Kircha, ${firstName}!\n\nPlease select your language:`, {
     reply_markup: {
       inline_keyboard: [
@@ -112,17 +78,23 @@ bot.command('start', async (ctx) => {
   });
 });
 
+bot.command('menu', async (ctx) => {
+  const isRegistered = await checkUserRegistration(ctx);
+  if (!isRegistered) {
+    await ctx.reply('Please register first by clicking /start');
+    return;
+  }
+  await showMainMenu(ctx);
+});
+
 // ==================== LANGUAGE ====================
 
 bot.callbackQuery(/lang_(en|am)/, async (ctx) => {
   const lang = ctx.match[1];
   await ctx.answerCallbackQuery();
   ctx.session.language = lang;
-  
   await ctx.reply(
-    lang === 'en' 
-      ? '✅ Language set!\n\n📱 Share your phone number:' 
-      : '✅ ቋንቋ ተቀየረ!\n\n📱 ስልክ ቁጥርዎን ያጋሩ:',
+    lang === 'en' ? '✅ Language set!\n\n📱 Share your phone number:' : '✅ ቋንቋ ተቀየረ!\n\n📱 ስልክ ቁጥርዎን ያጋሩ:',
     {
       reply_markup: {
         keyboard: [[{ text: '📱 Share My Phone Number', request_contact: true }]],
@@ -139,8 +111,6 @@ bot.on('message:contact', async (ctx) => {
   const contact = ctx.message.contact;
   if (!contact) return;
   const user = ctx.from;
-  if (!user) return;
-  
   try {
     const data = await apiCall('/api/v1/customers/register', {
       method: 'POST',
@@ -154,7 +124,6 @@ bot.on('message:contact', async (ctx) => {
         preferredLanguage: ctx.session.language || 'en',
       }),
     }, ctx);
-    
     if (data.success) {
       ctx.session.isRegistered = true;
       ctx.session.customerId = data.data.id;
@@ -176,10 +145,10 @@ bot.callbackQuery('show_menu', async (ctx) => {
   await showMainMenu(ctx);
 });
 
-async function showMainMenu(ctx: MyContext) {
+async function showMainMenu(ctx: Context) {
   const lang = ctx.session.language || 'en';
   await ctx.reply(
-    lang === 'en' ? '📋 *Main Menu*\nChoose an option:' : '📋 *ዋና ምናሌ*\nአማራጭ ይምረጡ:',
+    lang === 'en' ? '📋 *Main Menu*\n\nChoose an option:' : '📋 *ዋና ምናሌ*\n\nአማራጭ ይምረጡ:',
     {
       parse_mode: 'Markdown',
       reply_markup: {
@@ -244,7 +213,7 @@ bot.callbackQuery('menu_profile', async (ctx) => {
     if (data.success) {
       const c = data.data;
       await ctx.reply(
-        `👤 *Profile*\n📛 ${c.fullName}\n📱 ${c.user?.phone || 'N/A'}\n📅 ${formatDate(c.registrationDate)}`,
+        `👤 *Profile*\n📛 ${c.fullName}\n📱 ${c.user?.phone || 'N/A'}\n📅 ${new Date(c.registrationDate).toLocaleDateString()}`,
         { parse_mode: 'Markdown' }
       );
     }
@@ -273,3 +242,25 @@ bot.start({
 
 console.log('🤖 Customer Bot is running...');
 console.log(`📊 API URL: ${API_URL}`);
+
+// ==================== HTTP SERVER FOR RENDER HEALTH CHECK ====================
+
+const PORT = parseInt(process.env.PORT || '10000');
+
+http.createServer((req, res) => {
+  if (req.url === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      status: 'ok',
+      service: 'customer-bot',
+      timestamp: new Date().toISOString()
+    }));
+  } else {
+    res.writeHead(404);
+    res.end('Not Found');
+  }
+}).listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ Health check server running on port ${PORT}`);
+});
+
+console.log(`🔗 Health check: http://localhost:${PORT}/health`);
