@@ -7,6 +7,10 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ============================================================
+// ALL YOUR MODELS HERE (the same as before)
+// ============================================================
+
 model User {
   id            String    @id @default(cuid())
   telegramId    String    @unique
@@ -86,7 +90,7 @@ model KirchaGroup {
   kirchaTypeId      String
   kirchaType        KirchaType @relation(fields: [kirchaTypeId], references: [id])
 
-  nameEn            String
+  nameEn            String   @unique
   nameAm            String
   descriptionEn     String?
   descriptionAm     String?
@@ -306,7 +310,7 @@ model FeeConfiguration {
   id                String   @id @default(cuid())
   key               String   @unique
   type              String
-  nameEn            String
+  nameEn            String   @unique
   nameAm            String
   descriptionEn     String?
   descriptionAm     String?
@@ -327,7 +331,7 @@ model FeeConfiguration {
 
 model DeliveryZone {
   id                String   @id @default(cuid())
-  nameEn            String
+  nameEn            String   @unique
   nameAm            String
   fee               Float    @default(0)
   minOrder          Float    @default(0)
@@ -342,7 +346,7 @@ model DeliveryZone {
 
 model ServiceCharge {
   id                String   @id @default(cuid())
-  nameEn            String
+  nameEn            String   @unique
   nameAm            String
   type              String
   value             Float    @default(0)
@@ -383,27 +387,27 @@ model RefundRequest {
   customer          Customer @relation(fields: [customerId], references: [id])
   membershipId      String?
   membership        KirchaGroupMembership? @relation(fields: [membershipId], references: [id])
-  
+
   originalAmount    Float
   serviceCharge     Float    @default(0)
   penaltyAmount     Float    @default(0)
   refundAmount      Float
   penaltyReason     String?
-  
+
   bankName          String?
   accountName       String?
   accountNumber     String?
-  
+
   status            String   @default("PENDING")
   adminNote         String?
   adminActionAt     DateTime?
   completedAt       DateTime?
-  
+
   paymentAdviceUrl  String?
-  
+
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
-  
+
   complaints        Complaint[]
 }
 

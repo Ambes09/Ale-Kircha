@@ -1,0 +1,85 @@
+[1mdiff --git a/apps/api/prisma/schema.prisma b/apps/api/prisma/schema.prisma[m
+[1mindex 93eb357..24a0636 100644[m
+[1m--- a/apps/api/prisma/schema.prisma[m
+[1m+++ b/apps/api/prisma/schema.prisma[m
+[36m@@ -7,6 +7,10 @@[m [mdatasource db {[m
+   url      = env("DATABASE_URL")[m
+ }[m
+ [m
+[32m+[m[32m// ============================================================[m
+[32m+[m[32m// ALL YOUR MODELS HERE (the same as before)[m
+[32m+[m[32m// ============================================================[m
+[32m+[m
+ model User {[m
+   id            String    @id @default(cuid())[m
+   telegramId    String    @unique[m
+[36m@@ -86,7 +90,7 @@[m [mmodel KirchaGroup {[m
+   kirchaTypeId      String[m
+   kirchaType        KirchaType @relation(fields: [kirchaTypeId], references: [id])[m
+ [m
+[31m-  nameEn            String[m
+[32m+[m[32m  nameEn            String   @unique[m
+   nameAm            String[m
+   descriptionEn     String?[m
+   descriptionAm     String?[m
+[36m@@ -306,7 +310,7 @@[m [mmodel FeeConfiguration {[m
+   id                String   @id @default(cuid())[m
+   key               String   @unique[m
+   type              String[m
+[31m-  nameEn            String[m
+[32m+[m[32m  nameEn            String   @unique[m
+   nameAm            String[m
+   descriptionEn     String?[m
+   descriptionAm     String?[m
+[36m@@ -327,7 +331,7 @@[m [mmodel FeeConfiguration {[m
+ [m
+ model DeliveryZone {[m
+   id                String   @id @default(cuid())[m
+[31m-  nameEn            String[m
+[32m+[m[32m  nameEn            String   @unique[m
+   nameAm            String[m
+   fee               Float    @default(0)[m
+   minOrder          Float    @default(0)[m
+[36m@@ -342,7 +346,7 @@[m [mmodel DeliveryZone {[m
+ [m
+ model ServiceCharge {[m
+   id                String   @id @default(cuid())[m
+[31m-  nameEn            String[m
+[32m+[m[32m  nameEn            String   @unique[m
+   nameAm            String[m
+   type              String[m
+   value             Float    @default(0)[m
+[36m@@ -383,27 +387,27 @@[m [mmodel RefundRequest {[m
+   customer          Customer @relation(fields: [customerId], references: [id])[m
+   membershipId      String?[m
+   membership        KirchaGroupMembership? @relation(fields: [membershipId], references: [id])[m
+[31m-  [m
+[32m+[m
+   originalAmount    Float[m
+   serviceCharge     Float    @default(0)[m
+   penaltyAmount     Float    @default(0)[m
+   refundAmount      Float[m
+   penaltyReason     String?[m
+[31m-  [m
+[32m+[m
+   bankName          String?[m
+   accountName       String?[m
+   accountNumber     String?[m
+[31m-  [m
+[32m+[m
+   status            String   @default("PENDING")[m
+   adminNote         String?[m
+   adminActionAt     DateTime?[m
+   completedAt       DateTime?[m
+[31m-  [m
+[32m+[m
+   paymentAdviceUrl  String?[m
+[31m-  [m
+[32m+[m
+   createdAt         DateTime @default(now())[m
+   updatedAt         DateTime @updatedAt[m
+[31m-  [m
+[32m+[m
+   complaints        Complaint[][m
+ }[m
+ [m

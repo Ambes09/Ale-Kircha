@@ -7,7 +7,10 @@
     "dev": "node --import tsx --watch src/server.ts",
     "build": "tsc --skipLibCheck",
     "start": "node dist/server.js",
-    "migrate": "prisma migrate deploy"
+    "migrate": "prisma migrate deploy",
+    "seed": "node prisma/seed.js",
+    "migrate:postgres": "prisma migrate deploy",
+    "generate:postgres": "prisma generate"
   },
   "dependencies": {
     "@prisma/client": "5.22.0",
