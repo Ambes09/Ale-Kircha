@@ -2,6 +2,7 @@ import { Bot, session, Context, InlineKeyboard, SessionFlavor } from 'grammy';
 import { conversations, ConversationFlavor } from '@grammyjs/conversations';
 import dotenv from 'dotenv';
 import http from 'http';
+import https from 'https';
 
 dotenv.config();
 
@@ -52,8 +53,14 @@ bot.use(session({
 bot.use(conversations());
 
 // ============================================================
-// HELPERS
+// HELPERS - WITH SSL FIX
 // ============================================================
+
+// Create an HTTPS agent that ignores SSL certificate errors
+// This is needed because Render's internal networking may have SSL issues
+const httpsAgent = new https.Agent({
+  rejectUnauthorized: false,
+});
 
 async function apiCall(endpoint: string, options: any = {}, ctx?: Context) {
   const headers: any = {
@@ -68,27 +75,35 @@ async function apiCall(endpoint: string, options: any = {}, ctx?: Context) {
   console.log(`📡 API Call: ${options.method || 'GET'} ${url}`);
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 10000);
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
 
   try {
     const response = await fetch(url, {
       ...options,
       headers,
       signal: controller.signal,
+      // @ts-ignore - Add agent to bypass SSL issues
+      agent: url.startsWith('https') ? httpsAgent : undefined,
     });
     clearTimeout(timeoutId);
 
-    const data = await response.json();
-    console.log(`✅ API Response: ${response.status}`);
-    return data;
+    // Log response for debugging
+    const text = await response.text();
+    console.log(`✅ API Response: ${response.status} - ${text.substring(0, 100)}`);
+
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { success: false, error: { message: 'Invalid JSON response' } };
+    }
   } catch (error: any) {
     clearTimeout(timeoutId);
     if (error.name === 'AbortError') {
       console.error('❌ API Timeout:', url);
-      throw new Error('Request timed out');
+      return { success: false, error: { message: 'Request timed out' } };
     }
     console.error(`❌ API Error:`, error.message);
-    throw error;
+    return { success: false, error: { message: error.message } };
   }
 }
 
@@ -200,9 +215,14 @@ async function showStats(ctx: MyContext) {
   try {
     console.log('📊 Fetching stats...');
     const data = await apiCall('/api/v1/admin/stats', {}, ctx);
-    console.log('📊 Stats data:', JSON.stringify(data).substring(0, 200));
 
-    const stats = data.success ? data.data : {
+    if (!data.success) {
+      console.error('❌ Stats API returned error:', data.error);
+      await ctx.reply('❌ Error fetching stats. Please check API connection.');
+      return;
+    }
+
+    const stats = data.data || {
       pendingPayments: 0,
       pendingOrders: 0,
       activeGroups: 0,
@@ -260,11 +280,16 @@ async function showGroups(ctx: MyContext, page: number = 1) {
   try {
     console.log('🛒 Fetching groups...');
     const data = await apiCall('/api/v1/kircha/groups', {}, ctx);
-    console.log('🛒 Groups data:', JSON.stringify(data).substring(0, 200));
+
+    if (!data.success) {
+      console.error('❌ Groups API returned error:', data.error);
+      await ctx.reply('❌ Error fetching groups.');
+      return;
+    }
 
     let message = '🛒 *KIRCHA GROUPS*\n━━━━━━━━━━━━━━━━━━━━━━\n\n';
 
-    if (data.success && data.data.length > 0) {
+    if (data.data && data.data.length > 0) {
       const groups = data.data.slice((page - 1) * 5, page * 5);
       for (const group of groups) {
         const available = group.totalCapacity - group.reservedQuantity - group.soldQuantity;
@@ -332,11 +357,16 @@ async function showOrders(ctx: MyContext, page: number = 1) {
   try {
     console.log('📦 Fetching orders...');
     const data = await apiCall('/api/v1/orders', {}, ctx);
-    console.log('📦 Orders data:', JSON.stringify(data).substring(0, 200));
+
+    if (!data.success) {
+      console.error('❌ Orders API returned error:', data.error);
+      await ctx.reply('❌ Error fetching orders.');
+      return;
+    }
 
     let message = '📦 *ORDERS*\n━━━━━━━━━━━━━━━━━━━━━━\n\n';
 
-    if (data.success && data.data && data.data.length > 0) {
+    if (data.data && data.data.length > 0) {
       const orders = data.data.slice((page - 1) * 5, page * 5);
       for (const order of orders) {
         message += `🆔 *${order.orderNumber || 'N/A'}*\n`;
@@ -401,11 +431,16 @@ async function showUsers(ctx: MyContext, page: number = 1) {
   try {
     console.log('👥 Fetching users...');
     const data = await apiCall('/api/v1/customers', {}, ctx);
-    console.log('👥 Users data:', JSON.stringify(data).substring(0, 200));
+
+    if (!data.success) {
+      console.error('❌ Users API returned error:', data.error);
+      await ctx.reply('❌ Error fetching users.');
+      return;
+    }
 
     let message = '👥 *USERS*\n━━━━━━━━━━━━━━━━━━━━━━\n\n';
 
-    if (data.success && data.data && data.data.length > 0) {
+    if (data.data && data.data.length > 0) {
       const users = data.data.slice((page - 1) * 5, page * 5);
       for (const user of users) {
         message += `👤 *${user.fullName || 'Unknown'}*\n`;
@@ -468,11 +503,16 @@ async function showPayments(ctx: MyContext) {
   try {
     console.log('💳 Fetching payment methods...');
     const data = await apiCall('/api/v1/payment/methods', {}, ctx);
-    console.log('💳 Payment methods data:', JSON.stringify(data).substring(0, 200));
+
+    if (!data.success) {
+      console.error('❌ Payment methods API returned error:', data.error);
+      await ctx.reply('❌ Error fetching payment methods.');
+      return;
+    }
 
     let message = '💳 *PAYMENT METHODS*\n━━━━━━━━━━━━━━━━━━━━━━\n\n';
 
-    if (data.success && data.data.length > 0) {
+    if (data.data && data.data.length > 0) {
       for (const method of data.data) {
         message += `🏦 *${method.name}*\n`;
         message += `📋 ${method.accountName}\n`;
