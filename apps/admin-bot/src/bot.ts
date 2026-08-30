@@ -59,20 +59,6 @@ async function isAdmin(ctx: MyContext): Promise<boolean> {
   } catch { return false; }
 }
 
-function formatDate(date: string): string {
-  return new Date(date).toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
-
-function formatCurrency(amount: number): string {
-  return `${amount.toLocaleString()} ETB`;
-}
-
 // ==================== COMMANDS ====================
 
 bot.command('start', async (ctx) => {
@@ -87,7 +73,7 @@ bot.command('start', async (ctx) => {
 
 async function showDashboard(ctx: MyContext) {
   await ctx.reply(
-    '🏗️ *ALE KIRCHA ADMIN*\n━━━━━━━━━━━━━━━━━━━━━━\n\nWelcome to the Admin Dashboard!',
+    '🏗️ *ALE KIRCHA ADMIN*\n━━━━━━━━━━━━━━━━━━━━━━\n\nWelcome to the Admin Dashboard!\n\nSelect an option below:',
     {
       parse_mode: 'Markdown',
       reply_markup: {
@@ -105,6 +91,103 @@ async function showDashboard(ctx: MyContext) {
     }
   );
 }
+
+// ==================== STATS ====================
+
+bot.callbackQuery('admin_stats', async (ctx) => {
+  if (!await isAdmin(ctx)) {
+    await ctx.answerCallbackQuery('⛔ Unauthorized');
+    return;
+  }
+  await ctx.answerCallbackQuery();
+  await ctx.reply('📊 *Statistics*\n\nLoading stats...', { parse_mode: 'Markdown' });
+});
+
+// ==================== GROUPS ====================
+
+bot.callbackQuery('admin_groups', async (ctx) => {
+  if (!await isAdmin(ctx)) {
+    await ctx.answerCallbackQuery('⛔ Unauthorized');
+    return;
+  }
+  await ctx.answerCallbackQuery();
+  await ctx.reply('🛒 *Groups*\n\nFeature coming soon...', { parse_mode: 'Markdown' });
+});
+
+// ==================== ORDERS ====================
+
+bot.callbackQuery('admin_orders', async (ctx) => {
+  if (!await isAdmin(ctx)) {
+    await ctx.answerCallbackQuery('⛔ Unauthorized');
+    return;
+  }
+  await ctx.answerCallbackQuery();
+  await ctx.reply('📦 *Orders*\n\nFeature coming soon...', { parse_mode: 'Markdown' });
+});
+
+// ==================== PAYMENTS ====================
+
+bot.callbackQuery('admin_payments', async (ctx) => {
+  if (!await isAdmin(ctx)) {
+    await ctx.answerCallbackQuery('⛔ Unauthorized');
+    return;
+  }
+  await ctx.answerCallbackQuery();
+  await ctx.reply('💳 *Payments*\n\nFeature coming soon...', { parse_mode: 'Markdown' });
+});
+
+// ==================== USERS ====================
+
+bot.callbackQuery('admin_users', async (ctx) => {
+  if (!await isAdmin(ctx)) {
+    await ctx.answerCallbackQuery('⛔ Unauthorized');
+    return;
+  }
+  await ctx.answerCallbackQuery();
+  await ctx.reply('👥 *Users*\n\nFeature coming soon...', { parse_mode: 'Markdown' });
+});
+
+// ==================== REPORTS ====================
+
+bot.callbackQuery('admin_reports', async (ctx) => {
+  if (!await isAdmin(ctx)) {
+    await ctx.answerCallbackQuery('⛔ Unauthorized');
+    return;
+  }
+  await ctx.answerCallbackQuery();
+  await ctx.reply('📈 *Reports*\n\nFeature coming soon...', { parse_mode: 'Markdown' });
+});
+
+// ==================== SETTINGS ====================
+
+bot.callbackQuery('admin_settings', async (ctx) => {
+  if (!await isAdmin(ctx)) {
+    await ctx.answerCallbackQuery('⛔ Unauthorized');
+    return;
+  }
+  await ctx.answerCallbackQuery();
+  await ctx.reply('⚙️ *Settings*\n\nFeature coming soon...', { parse_mode: 'Markdown' });
+});
+
+// ==================== BACK & REFRESH ====================
+
+bot.callbackQuery('admin_back', async (ctx) => {
+  if (!await isAdmin(ctx)) {
+    await ctx.answerCallbackQuery('⛔ Unauthorized');
+    return;
+  }
+  await ctx.answerCallbackQuery();
+  await showDashboard(ctx);
+});
+
+bot.callbackQuery('admin_refresh', async (ctx) => {
+  if (!await isAdmin(ctx)) {
+    await ctx.answerCallbackQuery('⛔ Unauthorized');
+    return;
+  }
+  await ctx.answerCallbackQuery('🔄 Refreshing...');
+  await showDashboard(ctx);
+});
 
 // ==================== START ====================
 
