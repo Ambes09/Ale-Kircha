@@ -1,19 +1,21 @@
 {
   "version": 2,
-  "projects": [
+  "builds": [
     {
-      "name": "ale-kircha",
-      "settings": {
-        "framework": "vite",
-        "rootDirectory": "apps/customer-web",
-        "installCommand": "npm install",
-        "buildCommand": "npm run build",
-        "outputDirectory": "dist",
-        "devCommand": "npm run dev",
-        "env": {
-          "VITE_API_URL": "https://ale-kircha-kb3m.onrender.com"
-        }
+      "src": "apps/customer-web/package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "apps/customer-web/dist"
       }
     }
-  ]
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "/apps/customer-web/dist/$1"
+    }
+  ],
+  "env": {
+    "VITE_API_URL": "https://ale-kircha-kb3m.onrender.com"
+  }
 }
