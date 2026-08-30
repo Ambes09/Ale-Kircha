@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "node --import tsx --watch src/server.ts",
-    "start": "node --import tsx src/server.js"
+    "build": "tsc --skipLibCheck",
+    "start": "node dist/server.js",
+    "migrate": "prisma migrate deploy"
   },
   "dependencies": {
     "@prisma/client": "5.22.0",
