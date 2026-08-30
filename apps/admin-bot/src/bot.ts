@@ -1,9 +1,26 @@
-import { Bot, session, Context, InlineKeyboard } from 'grammy';
-import { conversations } from '@grammyjs/conversations';
+import { Bot, session, Context, InlineKeyboard, SessionFlavor } from 'grammy';
+import { conversations, ConversationFlavor } from '@grammyjs/conversations';
 import dotenv from 'dotenv';
 import http from 'http';
 
 dotenv.config();
+
+// ============================================================
+// TYPES
+// ============================================================
+
+interface SessionData {
+  language: string;
+  step: string;
+  currentPage: number;
+  data: Record<string, any>;
+}
+
+type MyContext = Context & SessionFlavor<SessionData> & ConversationFlavor;
+
+// ============================================================
+// CONFIG
+// ============================================================
 
 const API_URL = process.env.API_URL || 'http://localhost:4000';
 const BOT_TOKEN = process.env.ADMIN_BOT_TOKEN;
@@ -14,12 +31,14 @@ if (!BOT_TOKEN) {
   process.exit(1);
 }
 
-const bot = new Bot(BOT_TOKEN);
+const bot = new Bot<MyContext>(BOT_TOKEN);
 
-// ==================== SESSION ====================
+// ============================================================
+// MIDDLEWARE
+// ============================================================
 
 bot.use(session({
-  initial: () => ({
+  initial: (): SessionData => ({
     language: 'en',
     step: 'dashboard',
     currentPage: 1,
@@ -29,7 +48,9 @@ bot.use(session({
 
 bot.use(conversations());
 
-// ==================== HELPERS ====================
+// ============================================================
+// HELPERS
+// ============================================================
 
 async function apiCall(endpoint: string, options: any = {}, ctx?: Context) {
   const headers: any = {
@@ -74,7 +95,7 @@ function formatCurrency(amount: number): string {
 }
 
 function getStatusEmoji(status: string): string {
-  const map: any = {
+  const map: Record<string, string> = {
     'OPEN': '🟢', 'DRAFT': '📝', 'FULL': '🔴', 'CLOSED': '🔒',
     'COMPLETED': '✅', 'CANCELLED': '❌', 'EXPIRED': '⏰',
     'PAID': '✅', 'UNPAID': '⚠️', 'PENDING': '⏳', 'REJECTED': '❌',
@@ -86,7 +107,9 @@ function getStatusEmoji(status: string): string {
   return map[status] || '📌';
 }
 
-// ==================== COMMANDS ====================
+// ============================================================
+// COMMANDS
+// ============================================================
 
 bot.command('start', async (ctx) => {
   if (!await isAdmin(ctx)) {
@@ -104,9 +127,11 @@ bot.command('menu', async (ctx) => {
   await showDashboard(ctx);
 });
 
-// ==================== DASHBOARD ====================
+// ============================================================
+// DASHBOARD
+// ============================================================
 
-async function showDashboard(ctx: Context) {
+async function showDashboard(ctx: MyContext) {
   const keyboard = new InlineKeyboard()
     .text('📊 Stats', 'admin_stats')
     .text('🛒 Groups', 'admin_groups')
@@ -133,7 +158,9 @@ async function showDashboard(ctx: Context) {
   );
 }
 
-// ==================== STATS ====================
+// ============================================================
+// STATS
+// ============================================================
 
 bot.callbackQuery('admin_stats', async (ctx) => {
   if (!await isAdmin(ctx)) {
@@ -144,10 +171,16 @@ bot.callbackQuery('admin_stats', async (ctx) => {
   await showStats(ctx);
 });
 
-async function showStats(ctx: Context) {
+async function showStats(ctx: MyContext) {
   try {
     const data = await apiCall('/api/v1/admin/stats', {}, ctx);
-    const stats = data.success ? data.data : { pendingPayments: 0, pendingOrders: 0, activeGroups: 0, totalCustomers: 0, todayRevenue: 0 };
+    const stats = data.success ? data.data : { 
+      pendingPayments: 0, 
+      pendingOrders: 0, 
+      activeGroups: 0, 
+      totalCustomers: 0, 
+      todayRevenue: 0 
+    };
 
     const text = `
 📊 *SYSTEM STATISTICS*
@@ -180,7 +213,9 @@ async function showStats(ctx: Context) {
   }
 }
 
-// ==================== GROUPS ====================
+// ============================================================
+// GROUPS
+// ============================================================
 
 bot.callbackQuery('admin_groups', async (ctx) => {
   if (!await isAdmin(ctx)) {
@@ -192,7 +227,7 @@ bot.callbackQuery('admin_groups', async (ctx) => {
   await showGroups(ctx, 1);
 });
 
-async function showGroups(ctx: Context, page: number = 1) {
+async function showGroups(ctx: MyContext, page: number = 1) {
   try {
     const data = await apiCall('/api/v1/kircha/groups', {}, ctx);
     let message = '🛒 *KIRCHA GROUPS*\n━━━━━━━━━━━━━━━━━━━━━━\n\n';
@@ -246,7 +281,9 @@ bot.callbackQuery(/groups_page_(\d+)/, async (ctx) => {
   await showGroups(ctx, parseInt(ctx.match[1]));
 });
 
-// ==================== ORDERS ====================
+// ============================================================
+// ORDERS
+// ============================================================
 
 bot.callbackQuery('admin_orders', async (ctx) => {
   if (!await isAdmin(ctx)) {
@@ -258,7 +295,7 @@ bot.callbackQuery('admin_orders', async (ctx) => {
   await showOrders(ctx, 1);
 });
 
-async function showOrders(ctx: Context, page: number = 1) {
+async function showOrders(ctx: MyContext, page: number = 1) {
   try {
     const data = await apiCall('/api/v1/orders', {}, ctx);
     let message = '📦 *ORDERS*\n━━━━━━━━━━━━━━━━━━━━━━\n\n';
@@ -309,7 +346,9 @@ bot.callbackQuery(/orders_page_(\d+)/, async (ctx) => {
   await showOrders(ctx, parseInt(ctx.match[1]));
 });
 
-// ==================== USERS ====================
+// ============================================================
+// USERS
+// ============================================================
 
 bot.callbackQuery('admin_users', async (ctx) => {
   if (!await isAdmin(ctx)) {
@@ -321,7 +360,7 @@ bot.callbackQuery('admin_users', async (ctx) => {
   await showUsers(ctx, 1);
 });
 
-async function showUsers(ctx: Context, page: number = 1) {
+async function showUsers(ctx: MyContext, page: number = 1) {
   try {
     const data = await apiCall('/api/v1/customers', {}, ctx);
     let message = '👥 *USERS*\n━━━━━━━━━━━━━━━━━━━━━━\n\n';
@@ -371,7 +410,9 @@ bot.callbackQuery(/users_page_(\d+)/, async (ctx) => {
   await showUsers(ctx, parseInt(ctx.match[1]));
 });
 
-// ==================== PAYMENTS ====================
+// ============================================================
+// PAYMENTS
+// ============================================================
 
 bot.callbackQuery('admin_payments', async (ctx) => {
   if (!await isAdmin(ctx)) {
@@ -382,7 +423,7 @@ bot.callbackQuery('admin_payments', async (ctx) => {
   await showPayments(ctx);
 });
 
-async function showPayments(ctx: Context) {
+async function showPayments(ctx: MyContext) {
   try {
     const data = await apiCall('/api/v1/payment/methods', {}, ctx);
     let message = '💳 *PAYMENT METHODS*\n━━━━━━━━━━━━━━━━━━━━━━\n\n';
@@ -413,7 +454,9 @@ async function showPayments(ctx: Context) {
   }
 }
 
-// ==================== REPORTS ====================
+// ============================================================
+// REPORTS
+// ============================================================
 
 bot.callbackQuery('admin_reports', async (ctx) => {
   if (!await isAdmin(ctx)) {
@@ -424,7 +467,7 @@ bot.callbackQuery('admin_reports', async (ctx) => {
   await showReports(ctx);
 });
 
-async function showReports(ctx: Context) {
+async function showReports(ctx: MyContext) {
   await ctx.reply(
     '📊 *REPORTS*\n━━━━━━━━━━━━━━━━━━━━━━\n\n' +
     'Select a report to view:',
@@ -445,7 +488,9 @@ async function showReports(ctx: Context) {
   );
 }
 
-// ==================== SETTINGS ====================
+// ============================================================
+// SETTINGS
+// ============================================================
 
 bot.callbackQuery('admin_settings', async (ctx) => {
   if (!await isAdmin(ctx)) {
@@ -456,7 +501,7 @@ bot.callbackQuery('admin_settings', async (ctx) => {
   await showSettings(ctx);
 });
 
-async function showSettings(ctx: Context) {
+async function showSettings(ctx: MyContext) {
   const text = `
 ⚙️ *SYSTEM SETTINGS*
 ━━━━━━━━━━━━━━━━━━━━━━
@@ -492,7 +537,9 @@ async function showSettings(ctx: Context) {
   });
 }
 
-// ==================== BACK & REFRESH ====================
+// ============================================================
+// BACK & REFRESH
+// ============================================================
 
 bot.callbackQuery('admin_back', async (ctx) => {
   if (!await isAdmin(ctx)) {
@@ -512,7 +559,9 @@ bot.callbackQuery('admin_refresh', async (ctx) => {
   await showDashboard(ctx);
 });
 
-// ==================== BOT INFO ====================
+// ============================================================
+// BOT INFO
+// ============================================================
 
 bot.callbackQuery('admin_bot_info', async (ctx) => {
   if (!await isAdmin(ctx)) {
@@ -524,7 +573,7 @@ bot.callbackQuery('admin_bot_info', async (ctx) => {
     '📱 *Bot Information*\n\n' +
     '🤖 *Customer Bot:* @kirchaaleBot\n' +
     '🔐 *Admin Bot:* @Ale_kircha_admin_bot\n\n' +
-    '📡 *API URL:* http://localhost:4000\n' +
+    '📡 *API URL:* ' + API_URL + '\n' +
     '👥 *Admin IDs:* ' + ADMIN_IDS.join(', ') + '\n\n' +
     '📊 *Status:* All systems operational',
     {
@@ -538,7 +587,9 @@ bot.callbackQuery('admin_bot_info', async (ctx) => {
   );
 });
 
-// ==================== START BOT ====================
+// ============================================================
+// START BOT
+// ============================================================
 
 await bot.init();
 
@@ -550,14 +601,20 @@ console.log('🤖 Admin Bot is running...');
 console.log(`📊 API URL: ${API_URL}`);
 console.log(`👥 Admin IDs: ${ADMIN_IDS.join(', ')}`);
 
-// ==================== HTTP SERVER FOR RENDER HEALTH CHECK ====================
+// ============================================================
+// HTTP SERVER FOR RENDER HEALTH CHECK
+// ============================================================
 
-const PORT = process.env.PORT || 10000;
+const PORT = parseInt(process.env.PORT || '10000');
 
 http.createServer((req, res) => {
   if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', service: 'admin-bot', timestamp: new Date().toISOString() }));
+    res.end(JSON.stringify({ 
+      status: 'ok', 
+      service: 'admin-bot', 
+      timestamp: new Date().toISOString() 
+    }));
   } else {
     res.writeHead(404);
     res.end('Not Found');
@@ -565,3 +622,5 @@ http.createServer((req, res) => {
 }).listen(PORT, '0.0.0.0', () => {
   console.log(`✅ Health check server running on port ${PORT}`);
 });
+
+console.log(`🔗 Health check: http://localhost:${PORT}/health`);
