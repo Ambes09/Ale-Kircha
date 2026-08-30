@@ -1,23 +1,44 @@
-import { Bot, session, Context } from 'grammy';
-import { conversations } from '@grammyjs/conversations';
+import { Bot, session, Context, SessionFlavor } from 'grammy';
+import { conversations, ConversationFlavor } from '@grammyjs/conversations';
 import dotenv from 'dotenv';
 import http from 'http';
 
 dotenv.config();
 
+// ============================================================
+// TYPES
+// ============================================================
+
+interface SessionData {
+  language: string;
+  step: string;
+  isRegistered: boolean;
+  customerId: string | null;
+  data: Record<string, any>;
+}
+
+type MyContext = Context & SessionFlavor<SessionData> & ConversationFlavor;
+
+// ============================================================
+// CONFIG
+// ============================================================
+
 const API_URL = process.env.API_URL || 'http://localhost:4000';
 const BOT_TOKEN = process.env.CUSTOMER_BOT_TOKEN;
+
 if (!BOT_TOKEN) {
   console.error('❌ CUSTOMER_BOT_TOKEN is required!');
   process.exit(1);
 }
 
-const bot = new Bot(BOT_TOKEN);
+const bot = new Bot<MyContext>(BOT_TOKEN);
 
-// ==================== SESSION ====================
+// ============================================================
+// MIDDLEWARE
+// ============================================================
 
 bot.use(session({
-  initial: () => ({
+  initial: (): SessionData => ({
     language: 'en',
     step: 'start',
     isRegistered: false,
@@ -28,16 +49,26 @@ bot.use(session({
 
 bot.use(conversations());
 
-// ==================== HELPERS ====================
+// ============================================================
+// HELPERS
+// ============================================================
 
 async function apiCall(endpoint: string, options: any = {}, ctx?: Context) {
-  const headers: any = { 'Content-Type': 'application/json', ...options.headers };
-  if (ctx?.from?.id) headers['x-telegram-id'] = ctx.from.id.toString();
-  const response = await fetch(`${API_URL}${endpoint}`, { ...options, headers });
+  const headers: any = {
+    'Content-Type': 'application/json',
+    ...options.headers,
+  };
+  if (ctx?.from?.id) {
+    headers['x-telegram-id'] = ctx.from.id.toString();
+  }
+  const response = await fetch(`${API_URL}${endpoint}`, {
+    ...options,
+    headers,
+  });
   return response.json();
 }
 
-async function checkUserRegistration(ctx: Context): Promise<boolean> {
+async function checkUserRegistration(ctx: MyContext): Promise<boolean> {
   if (ctx.session.isRegistered && ctx.session.customerId) return true;
   try {
     const data = await apiCall('/api/v1/customers/me', {}, ctx);
@@ -55,7 +86,9 @@ function formatCurrency(amount: number): string {
   return `${amount.toLocaleString()} ETB`;
 }
 
-// ==================== COMMANDS ====================
+// ============================================================
+// COMMANDS
+// ============================================================
 
 bot.command('start', async (ctx) => {
   const isRegistered = await checkUserRegistration(ctx);
@@ -87,7 +120,9 @@ bot.command('menu', async (ctx) => {
   await showMainMenu(ctx);
 });
 
-// ==================== LANGUAGE ====================
+// ============================================================
+// LANGUAGE
+// ============================================================
 
 bot.callbackQuery(/lang_(en|am)/, async (ctx) => {
   const lang = ctx.match[1];
@@ -105,7 +140,9 @@ bot.callbackQuery(/lang_(en|am)/, async (ctx) => {
   );
 });
 
-// ==================== CONTACT ====================
+// ============================================================
+// CONTACT
+// ============================================================
 
 bot.on('message:contact', async (ctx) => {
   const contact = ctx.message.contact;
@@ -138,14 +175,16 @@ bot.on('message:contact', async (ctx) => {
   }
 });
 
-// ==================== MAIN MENU ====================
+// ============================================================
+// MAIN MENU
+// ============================================================
 
 bot.callbackQuery('show_menu', async (ctx) => {
   await ctx.answerCallbackQuery();
   await showMainMenu(ctx);
 });
 
-async function showMainMenu(ctx: Context) {
+async function showMainMenu(ctx: MyContext) {
   const lang = ctx.session.language || 'en';
   await ctx.reply(
     lang === 'en' ? '📋 *Main Menu*\n\nChoose an option:' : '📋 *ዋና ምናሌ*\n\nአማራጭ ይምረጡ:',
@@ -163,7 +202,9 @@ async function showMainMenu(ctx: Context) {
   );
 }
 
-// ==================== ORDER ====================
+// ============================================================
+// ORDER
+// ============================================================
 
 bot.callbackQuery('menu_order', async (ctx) => {
   await ctx.answerCallbackQuery();
@@ -184,7 +225,9 @@ bot.callbackQuery('menu_order', async (ctx) => {
   }
 });
 
-// ==================== ORDERS ====================
+// ============================================================
+// ORDERS
+// ============================================================
 
 bot.callbackQuery('menu_orders', async (ctx) => {
   await ctx.answerCallbackQuery();
@@ -204,7 +247,9 @@ bot.callbackQuery('menu_orders', async (ctx) => {
   }
 });
 
-// ==================== PROFILE ====================
+// ============================================================
+// PROFILE
+// ============================================================
 
 bot.callbackQuery('menu_profile', async (ctx) => {
   await ctx.answerCallbackQuery();
@@ -222,7 +267,9 @@ bot.callbackQuery('menu_profile', async (ctx) => {
   }
 });
 
-// ==================== HELP ====================
+// ============================================================
+// HELP
+// ============================================================
 
 bot.callbackQuery('menu_help', async (ctx) => {
   await ctx.answerCallbackQuery();
@@ -232,7 +279,9 @@ bot.callbackQuery('menu_help', async (ctx) => {
   );
 });
 
-// ==================== START ====================
+// ============================================================
+// START BOT
+// ============================================================
 
 await bot.init();
 
@@ -243,7 +292,9 @@ bot.start({
 console.log('🤖 Customer Bot is running...');
 console.log(`📊 API URL: ${API_URL}`);
 
-// ==================== HTTP SERVER FOR RENDER HEALTH CHECK ====================
+// ============================================================
+// HTTP SERVER FOR RENDER HEALTH CHECK
+// ============================================================
 
 const PORT = parseInt(process.env.PORT || '10000');
 
