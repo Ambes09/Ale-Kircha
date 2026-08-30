@@ -1,0 +1,19 @@
+{
+  "version": 2,
+  "projects": [
+    {
+      "name": "ale-kircha",
+      "settings": {
+        "framework": "vite",
+        "rootDirectory": "apps/customer-web",
+        "installCommand": "npm install",
+        "buildCommand": "npm run build",
+        "outputDirectory": "dist",
+        "devCommand": "npm run dev",
+        "env": {
+          "VITE_API_URL": "https://ale-kircha-kb3m.onrender.com"
+        }
+      }
+    }
+  ]
+}
