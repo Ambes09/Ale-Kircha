@@ -65,3 +65,22 @@ services:
         sync: false
       - key: API_URL
         sync: false
+  # ----------------------------------------------------------
+  # Admin Bot (Worker - New Service)
+  # ----------------------------------------------------------
+  - type: worker
+    name: ale-kircha-admin-bot-worker
+    runtime: node
+    plan: free
+    rootDir: apps/admin-bot
+    buildCommand: npm install && npm run build
+    startCommand: node dist/bot.js
+    envVars:
+      - key: ADMIN_BOT_TOKEN
+        sync: false
+      - key: ADMIN_TELEGRAM_IDS
+        sync: false
+      - key: API_URL
+        sync: false
+      - key: NODE_ENV
+        value: production
