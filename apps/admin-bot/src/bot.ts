@@ -55,7 +55,6 @@ bot.use(conversations());
 // HELPERS
 // ============================================================
 
-// SINGLE apiCall FUNCTION - KEEP ONLY THIS ONE
 async function apiCall(endpoint: string, options: any = {}, ctx?: Context) {
   const headers: any = {
     'Content-Type': 'application/json',
@@ -68,7 +67,6 @@ async function apiCall(endpoint: string, options: any = {}, ctx?: Context) {
   const url = `${API_URL}${endpoint}`;
   console.log(`📡 API Call: ${options.method || 'GET'} ${url}`);
 
-  // Add timeout
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 10000);
 
@@ -499,7 +497,7 @@ async function showPayments(ctx: MyContext) {
     console.error('❌ Payment methods error:', error);
     await ctx.reply('❌ Error fetching payment methods.');
   }
-});
+}
 
 // ============================================================
 // REPORTS
