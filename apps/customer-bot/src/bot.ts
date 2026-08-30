@@ -1,4 +1,4 @@
-import { Bot, session, Context } from 'grammy';
+import { Bot, session, Context, InlineKeyboard } from 'grammy';
 import { conversations } from '@grammyjs/conversations';
 import dotenv from 'dotenv';
 
@@ -11,11 +11,23 @@ if (!BOT_TOKEN) {
   process.exit(1);
 }
 
-const bot = new Bot(BOT_TOKEN);
+// Define session type
+interface SessionData {
+  language: string;
+  step: string;
+  isRegistered: boolean;
+  customerId: string | null;
+  data: Record<string, any>;
+}
 
-// Session
+// Create bot with session type
+type MyContext = Context & SessionFlavor<SessionData> & ConversationFlavor;
+
+const bot = new Bot<MyContext>(BOT_TOKEN);
+
+// Session middleware with explicit typing
 bot.use(session({
-  initial: () => ({
+  initial: (): SessionData => ({
     language: 'en',
     step: 'start',
     isRegistered: false,
@@ -24,18 +36,27 @@ bot.use(session({
   }),
 }));
 
+// Conversations middleware
 bot.use(conversations());
 
 // ==================== HELPERS ====================
 
-async function apiCall(endpoint: string, options: any = {}, ctx?: Context) {
-  const headers: any = { 'Content-Type': 'application/json', ...options.headers };
-  if (ctx?.from?.id) headers['x-telegram-id'] = ctx.from.id.toString();
-  const response = await fetch(`${API_URL}${endpoint}`, { ...options, headers });
+async function apiCall(endpoint: string, options: any = {}, ctx?: MyContext) {
+  const headers: any = {
+    'Content-Type': 'application/json',
+    ...options.headers,
+  };
+  if (ctx?.from?.id) {
+    headers['x-telegram-id'] = ctx.from.id.toString();
+  }
+  const response = await fetch(`${API_URL}${endpoint}`, {
+    ...options,
+    headers,
+  });
   return response.json();
 }
 
-async function checkUserRegistration(ctx: Context): Promise<boolean> {
+async function checkUserRegistration(ctx: MyContext): Promise<boolean> {
   if (ctx.session.isRegistered && ctx.session.customerId) return true;
   try {
     const data = await apiCall('/api/v1/customers/me', {}, ctx);
@@ -49,6 +70,16 @@ async function checkUserRegistration(ctx: Context): Promise<boolean> {
   return false;
 }
 
+function formatDate(date: string): string {
+  return new Date(date).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 function formatCurrency(amount: number): string {
   return `${amount.toLocaleString()} ETB`;
 }
@@ -58,14 +89,18 @@ function formatCurrency(amount: number): string {
 bot.command('start', async (ctx) => {
   const isRegistered = await checkUserRegistration(ctx);
   const firstName = ctx.from?.first_name || 'Customer';
+  
   if (isRegistered) {
     await ctx.reply(`👋 Welcome back to Ale Kircha, ${firstName}!`, {
       reply_markup: {
-        inline_keyboard: [[{ text: '📋 Main Menu', callback_data: 'show_menu' }]],
+        inline_keyboard: [
+          [{ text: '📋 Main Menu', callback_data: 'show_menu' }],
+        ],
       },
     });
     return;
   }
+  
   await ctx.reply(`👋 Welcome to Ale Kircha, ${firstName}!\n\nPlease select your language:`, {
     reply_markup: {
       inline_keyboard: [
@@ -76,23 +111,17 @@ bot.command('start', async (ctx) => {
   });
 });
 
-bot.command('menu', async (ctx) => {
-  const isRegistered = await checkUserRegistration(ctx);
-  if (!isRegistered) {
-    await ctx.reply('Please register first by clicking /start');
-    return;
-  }
-  await showMainMenu(ctx);
-});
-
 // ==================== LANGUAGE ====================
 
 bot.callbackQuery(/lang_(en|am)/, async (ctx) => {
   const lang = ctx.match[1];
   await ctx.answerCallbackQuery();
   ctx.session.language = lang;
+  
   await ctx.reply(
-    lang === 'en' ? '✅ Language set!\n\n📱 Share your phone number:' : '✅ ቋንቋ ተቀየረ!\n\n📱 ስልክ ቁጥርዎን ያጋሩ:',
+    lang === 'en' 
+      ? '✅ Language set!\n\n📱 Share your phone number:' 
+      : '✅ ቋንቋ ተቀየረ!\n\n📱 ስልክ ቁጥርዎን ያጋሩ:',
     {
       reply_markup: {
         keyboard: [[{ text: '📱 Share My Phone Number', request_contact: true }]],
@@ -109,6 +138,8 @@ bot.on('message:contact', async (ctx) => {
   const contact = ctx.message.contact;
   if (!contact) return;
   const user = ctx.from;
+  if (!user) return;
+  
   try {
     const data = await apiCall('/api/v1/customers/register', {
       method: 'POST',
@@ -122,6 +153,7 @@ bot.on('message:contact', async (ctx) => {
         preferredLanguage: ctx.session.language || 'en',
       }),
     }, ctx);
+    
     if (data.success) {
       ctx.session.isRegistered = true;
       ctx.session.customerId = data.data.id;
@@ -143,7 +175,7 @@ bot.callbackQuery('show_menu', async (ctx) => {
   await showMainMenu(ctx);
 });
 
-async function showMainMenu(ctx: Context) {
+async function showMainMenu(ctx: MyContext) {
   const lang = ctx.session.language || 'en';
   await ctx.reply(
     lang === 'en' ? '📋 *Main Menu*\nChoose an option:' : '📋 *ዋና ምናሌ*\nአማራጭ ይምረጡ:',
@@ -161,86 +193,28 @@ async function showMainMenu(ctx: Context) {
   );
 }
 
-// ==================== ORDER KIRCHA ====================
+// ==================== ORDER ====================
 
 bot.callbackQuery('menu_order', async (ctx) => {
   await ctx.answerCallbackQuery();
-  await showAvailableGroups(ctx);
-});
-
-async function showAvailableGroups(ctx: Context) {
   try {
     const data = await apiCall('/api/v1/kircha/groups/available', {}, ctx);
-    
     let message = '🛒 *Available Groups:*\n\n';
-    
     if (data.success && data.data && data.data.length > 0) {
       for (const group of data.data) {
         const available = group.totalCapacity - group.reservedQuantity - group.soldQuantity;
         message += `*${group.nameEn}*\n📦 ${available}/${group.totalCapacity}\n💰 ${formatCurrency(group.unitPrice)}\n\n`;
       }
-      await ctx.reply(message, { 
-        parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '🔙 Back to Menu', callback_data: 'show_menu' }],
-          ],
-        }
-      });
+      await ctx.reply(message, { parse_mode: 'Markdown' });
     } else {
-      // No groups available - Show create option
-      await ctx.reply(
-        '📭 *No Kircha groups available at the moment.*\n\nWould you like to create a new group?',
-        {
-          parse_mode: 'Markdown',
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: '➕ Create New Group', callback_data: 'menu_create_group' }],
-              [{ text: '🔙 Back to Menu', callback_data: 'show_menu' }],
-            ],
-          },
-        }
-      );
+      await ctx.reply('No groups available.');
     }
   } catch (error) {
-    await ctx.reply('❌ Error fetching groups.', {
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '🔄 Retry', callback_data: 'menu_order' }],
-          [{ text: '🔙 Back to Menu', callback_data: 'show_menu' }],
-        ],
-      },
-    });
+    await ctx.reply('❌ Error fetching groups.');
   }
-}
-
-// ==================== CREATE GROUP ====================
-
-bot.callbackQuery('menu_create_group', async (ctx) => {
-  await ctx.answerCallbackQuery();
-  await ctx.reply(
-    '🛒 *Create New Kircha Group*\n\n' +
-    'Send the group details:\n\n' +
-    '`nameEn: Saturday Ox Kircha`\n' +
-    '`nameAm: ቅዳሜ የበሬ ቅርጫ`\n' +
-    '`kirchaTypeCode: OX`\n' +
-    '`totalCapacity: 8`\n' +
-    '`unitPrice: 35000`\n' +
-    '`halfPrice: 18000`\n' +
-    '`deliveryFee: 500`\n' +
-    '`deliveryDate: 2026-08-29T14:00:00Z`',
-    {
-      parse_mode: 'Markdown',
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '🔙 Back to Groups', callback_data: 'menu_order' }],
-        ],
-      },
-    }
-  );
 });
 
-// ==================== MY ORDERS ====================
+// ==================== ORDERS ====================
 
 bot.callbackQuery('menu_orders', async (ctx) => {
   await ctx.answerCallbackQuery();
@@ -254,22 +228,9 @@ bot.callbackQuery('menu_orders', async (ctx) => {
     } else {
       message += 'No orders found.';
     }
-    await ctx.reply(message, { 
-      parse_mode: 'Markdown',
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '🔙 Back to Menu', callback_data: 'show_menu' }],
-        ],
-      },
-    });
+    await ctx.reply(message, { parse_mode: 'Markdown' });
   } catch (error) {
-    await ctx.reply('❌ Error fetching orders.', {
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '🔙 Back to Menu', callback_data: 'show_menu' }],
-        ],
-      },
-    });
+    await ctx.reply('❌ Error fetching orders.');
   }
 });
 
@@ -282,25 +243,12 @@ bot.callbackQuery('menu_profile', async (ctx) => {
     if (data.success) {
       const c = data.data;
       await ctx.reply(
-        `👤 *Profile*\n📛 ${c.fullName}\n📱 ${c.user?.phone || 'N/A'}\n📅 ${new Date(c.registrationDate).toLocaleDateString()}`,
-        { 
-          parse_mode: 'Markdown',
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: '🔙 Back to Menu', callback_data: 'show_menu' }],
-            ],
-          },
-        }
+        `👤 *Profile*\n📛 ${c.fullName}\n📱 ${c.user?.phone || 'N/A'}\n📅 ${formatDate(c.registrationDate)}`,
+        { parse_mode: 'Markdown' }
       );
     }
   } catch (error) {
-    await ctx.reply('❌ Error fetching profile.', {
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '🔙 Back to Menu', callback_data: 'show_menu' }],
-        ],
-      },
-    });
+    await ctx.reply('❌ Error fetching profile.');
   }
 });
 
@@ -310,35 +258,8 @@ bot.callbackQuery('menu_help', async (ctx) => {
   await ctx.answerCallbackQuery();
   await ctx.reply(
     '❓ *Help*\n\n1. /start - Begin\n2. Share phone to register\n3. Order Kircha\n4. Track orders\n\nContact: @AleKirchaAdmin',
-    { 
-      parse_mode: 'Markdown',
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '🔙 Back to Menu', callback_data: 'show_menu' }],
-        ],
-      },
-    }
+    { parse_mode: 'Markdown' }
   );
-});
-
-// ==================== MESSAGE HANDLER ====================
-
-bot.on('message', async (ctx) => {
-  if (!ctx.message.text) return;
-  
-  const isRegistered = await checkUserRegistration(ctx);
-  if (!isRegistered) {
-    await ctx.reply('Please use /start to begin registration.');
-    return;
-  }
-  
-  await ctx.reply('Please use the menu buttons.', {
-    reply_markup: {
-      inline_keyboard: [
-        [{ text: '📋 Main Menu', callback_data: 'show_menu' }],
-      ],
-    },
-  });
 });
 
 // ==================== START ====================
