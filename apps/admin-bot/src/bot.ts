@@ -624,3 +624,45 @@ http.createServer((req, res) => {
 });
 
 console.log(`🔗 Health check: http://localhost:${PORT}/health`);
+
+// ============================================================
+// IMPROVED API CALL WITH TIMEOUT
+// ============================================================
+
+async function apiCall(endpoint: string, options: any = {}, ctx?: Context) {
+  const headers: any = {
+    'Content-Type': 'application/json',
+    ...options.headers,
+  };
+  if (ctx?.from?.id) {
+    headers['x-telegram-id'] = ctx.from.id.toString();
+  }
+  
+  const url = `${API_URL}${endpoint}`;
+  console.log(`📡 API Call: ${options.method || 'GET'} ${url}`);
+  
+  // Add timeout
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+  
+  try {
+    const response = await fetch(url, {
+      ...options,
+      headers,
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    
+    const data = await response.json();
+    console.log(`✅ API Response: ${response.status}`);
+    return data;
+  } catch (error: any) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      console.error('❌ API Timeout:', url);
+      throw new Error('Request timed out');
+    }
+    console.error(`❌ API Error:`, error.message);
+    throw error;
+  }
+}
