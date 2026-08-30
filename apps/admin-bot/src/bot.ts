@@ -26,6 +26,9 @@ const API_URL = process.env.API_URL || 'http://localhost:4000';
 const BOT_TOKEN = process.env.ADMIN_BOT_TOKEN;
 const ADMIN_IDS = (process.env.ADMIN_TELEGRAM_IDS || '').split(',').map(id => id.trim());
 
+console.log(`🔗 API_URL: ${API_URL}`);
+console.log(`👥 Admin IDs: ${ADMIN_IDS.join(', ')}`);
+
 if (!BOT_TOKEN) {
   console.error('❌ ADMIN_BOT_TOKEN is required!');
   process.exit(1);
@@ -52,6 +55,7 @@ bot.use(conversations());
 // HELPERS
 // ============================================================
 
+// SINGLE apiCall FUNCTION - KEEP ONLY THIS ONE
 async function apiCall(endpoint: string, options: any = {}, ctx?: Context) {
   const headers: any = {
     'Content-Type': 'application/json',
@@ -60,11 +64,34 @@ async function apiCall(endpoint: string, options: any = {}, ctx?: Context) {
   if (ctx?.from?.id) {
     headers['x-telegram-id'] = ctx.from.id.toString();
   }
-  const response = await fetch(`${API_URL}${endpoint}`, {
-    ...options,
-    headers,
-  });
-  return response.json();
+
+  const url = `${API_URL}${endpoint}`;
+  console.log(`📡 API Call: ${options.method || 'GET'} ${url}`);
+
+  // Add timeout
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      headers,
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    const data = await response.json();
+    console.log(`✅ API Response: ${response.status}`);
+    return data;
+  } catch (error: any) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      console.error('❌ API Timeout:', url);
+      throw new Error('Request timed out');
+    }
+    console.error(`❌ API Error:`, error.message);
+    throw error;
+  }
 }
 
 async function isAdmin(ctx: Context): Promise<boolean> {
@@ -173,13 +200,16 @@ bot.callbackQuery('admin_stats', async (ctx) => {
 
 async function showStats(ctx: MyContext) {
   try {
+    console.log('📊 Fetching stats...');
     const data = await apiCall('/api/v1/admin/stats', {}, ctx);
-    const stats = data.success ? data.data : { 
-      pendingPayments: 0, 
-      pendingOrders: 0, 
-      activeGroups: 0, 
-      totalCustomers: 0, 
-      todayRevenue: 0 
+    console.log('📊 Stats data:', JSON.stringify(data).substring(0, 200));
+
+    const stats = data.success ? data.data : {
+      pendingPayments: 0,
+      pendingOrders: 0,
+      activeGroups: 0,
+      totalCustomers: 0,
+      todayRevenue: 0
     };
 
     const text = `
@@ -209,7 +239,8 @@ async function showStats(ctx: MyContext) {
       },
     });
   } catch (error) {
-    await ctx.reply('❌ Error fetching stats.');
+    console.error('❌ Stats error:', error);
+    await ctx.reply('❌ Error fetching stats. Please check API connection.');
   }
 }
 
@@ -229,9 +260,12 @@ bot.callbackQuery('admin_groups', async (ctx) => {
 
 async function showGroups(ctx: MyContext, page: number = 1) {
   try {
+    console.log('🛒 Fetching groups...');
     const data = await apiCall('/api/v1/kircha/groups', {}, ctx);
+    console.log('🛒 Groups data:', JSON.stringify(data).substring(0, 200));
+
     let message = '🛒 *KIRCHA GROUPS*\n━━━━━━━━━━━━━━━━━━━━━━\n\n';
-    
+
     if (data.success && data.data.length > 0) {
       const groups = data.data.slice((page - 1) * 5, page * 5);
       for (const group of groups) {
@@ -243,7 +277,7 @@ async function showGroups(ctx: MyContext, page: number = 1) {
         message += `📅 ${group.deliveryDate ? formatDate(group.deliveryDate) : 'TBD'}\n`;
         message += `━━━━━━━━━━━━━━━━━━━━━━\n\n`;
       }
-      
+
       const totalPages = Math.ceil(data.data.length / 5);
       const keyboard = new InlineKeyboard();
       if (page > 1) keyboard.text('◀️ Prev', `groups_page_${page - 1}`);
@@ -252,7 +286,7 @@ async function showGroups(ctx: MyContext, page: number = 1) {
       keyboard.row();
       keyboard.text('➕ Create Group', 'admin_create_group');
       keyboard.text('🔙 Back', 'admin_back');
-      
+
       await ctx.reply(message, {
         parse_mode: 'Markdown',
         reply_markup: keyboard,
@@ -268,6 +302,7 @@ async function showGroups(ctx: MyContext, page: number = 1) {
       });
     }
   } catch (error) {
+    console.error('❌ Groups error:', error);
     await ctx.reply('❌ Error fetching groups.');
   }
 }
@@ -297,9 +332,12 @@ bot.callbackQuery('admin_orders', async (ctx) => {
 
 async function showOrders(ctx: MyContext, page: number = 1) {
   try {
+    console.log('📦 Fetching orders...');
     const data = await apiCall('/api/v1/orders', {}, ctx);
+    console.log('📦 Orders data:', JSON.stringify(data).substring(0, 200));
+
     let message = '📦 *ORDERS*\n━━━━━━━━━━━━━━━━━━━━━━\n\n';
-    
+
     if (data.success && data.data && data.data.length > 0) {
       const orders = data.data.slice((page - 1) * 5, page * 5);
       for (const order of orders) {
@@ -310,7 +348,7 @@ async function showOrders(ctx: MyContext, page: number = 1) {
         message += `📅 ${formatDate(order.createdAt)}\n`;
         message += `━━━━━━━━━━━━━━━━━━━━━━\n\n`;
       }
-      
+
       const totalPages = Math.ceil(data.data.length / 5);
       const keyboard = new InlineKeyboard();
       if (page > 1) keyboard.text('◀️ Prev', `orders_page_${page - 1}`);
@@ -318,7 +356,7 @@ async function showOrders(ctx: MyContext, page: number = 1) {
       if (page < totalPages) keyboard.text('Next ▶️', `orders_page_${page + 1}`);
       keyboard.row();
       keyboard.text('🔙 Back', 'admin_back');
-      
+
       await ctx.reply(message, {
         parse_mode: 'Markdown',
         reply_markup: keyboard,
@@ -333,6 +371,7 @@ async function showOrders(ctx: MyContext, page: number = 1) {
       });
     }
   } catch (error) {
+    console.error('❌ Orders error:', error);
     await ctx.reply('❌ Error fetching orders.');
   }
 }
@@ -362,9 +401,12 @@ bot.callbackQuery('admin_users', async (ctx) => {
 
 async function showUsers(ctx: MyContext, page: number = 1) {
   try {
+    console.log('👥 Fetching users...');
     const data = await apiCall('/api/v1/customers', {}, ctx);
+    console.log('👥 Users data:', JSON.stringify(data).substring(0, 200));
+
     let message = '👥 *USERS*\n━━━━━━━━━━━━━━━━━━━━━━\n\n';
-    
+
     if (data.success && data.data && data.data.length > 0) {
       const users = data.data.slice((page - 1) * 5, page * 5);
       for (const user of users) {
@@ -374,7 +416,7 @@ async function showUsers(ctx: MyContext, page: number = 1) {
         message += `📅 ${formatDate(user.registrationDate)}\n`;
         message += `━━━━━━━━━━━━━━━━━━━━━━\n\n`;
       }
-      
+
       const totalPages = Math.ceil(data.data.length / 5);
       const keyboard = new InlineKeyboard();
       if (page > 1) keyboard.text('◀️ Prev', `users_page_${page - 1}`);
@@ -382,7 +424,7 @@ async function showUsers(ctx: MyContext, page: number = 1) {
       if (page < totalPages) keyboard.text('Next ▶️', `users_page_${page + 1}`);
       keyboard.row();
       keyboard.text('🔙 Back', 'admin_back');
-      
+
       await ctx.reply(message, {
         parse_mode: 'Markdown',
         reply_markup: keyboard,
@@ -397,6 +439,7 @@ async function showUsers(ctx: MyContext, page: number = 1) {
       });
     }
   } catch (error) {
+    console.error('❌ Users error:', error);
     await ctx.reply('❌ Error fetching users.');
   }
 }
@@ -425,9 +468,12 @@ bot.callbackQuery('admin_payments', async (ctx) => {
 
 async function showPayments(ctx: MyContext) {
   try {
+    console.log('💳 Fetching payment methods...');
     const data = await apiCall('/api/v1/payment/methods', {}, ctx);
+    console.log('💳 Payment methods data:', JSON.stringify(data).substring(0, 200));
+
     let message = '💳 *PAYMENT METHODS*\n━━━━━━━━━━━━━━━━━━━━━━\n\n';
-    
+
     if (data.success && data.data.length > 0) {
       for (const method of data.data) {
         message += `🏦 *${method.name}*\n`;
@@ -439,7 +485,7 @@ async function showPayments(ctx: MyContext) {
     } else {
       message += 'No payment methods configured.';
     }
-    
+
     await ctx.reply(message, {
       parse_mode: 'Markdown',
       reply_markup: {
@@ -450,9 +496,10 @@ async function showPayments(ctx: MyContext) {
       },
     });
   } catch (error) {
+    console.error('❌ Payment methods error:', error);
     await ctx.reply('❌ Error fetching payment methods.');
   }
-}
+});
 
 // ============================================================
 // REPORTS
@@ -610,10 +657,10 @@ const PORT = parseInt(process.env.PORT || '10000');
 http.createServer((req, res) => {
   if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ 
-      status: 'ok', 
-      service: 'admin-bot', 
-      timestamp: new Date().toISOString() 
+    res.end(JSON.stringify({
+      status: 'ok',
+      service: 'admin-bot',
+      timestamp: new Date().toISOString()
     }));
   } else {
     res.writeHead(404);
@@ -624,45 +671,3 @@ http.createServer((req, res) => {
 });
 
 console.log(`🔗 Health check: http://localhost:${PORT}/health`);
-
-// ============================================================
-// IMPROVED API CALL WITH TIMEOUT
-// ============================================================
-
-async function apiCall(endpoint: string, options: any = {}, ctx?: Context) {
-  const headers: any = {
-    'Content-Type': 'application/json',
-    ...options.headers,
-  };
-  if (ctx?.from?.id) {
-    headers['x-telegram-id'] = ctx.from.id.toString();
-  }
-  
-  const url = `${API_URL}${endpoint}`;
-  console.log(`📡 API Call: ${options.method || 'GET'} ${url}`);
-  
-  // Add timeout
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
-  
-  try {
-    const response = await fetch(url, {
-      ...options,
-      headers,
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
-    
-    const data = await response.json();
-    console.log(`✅ API Response: ${response.status}`);
-    return data;
-  } catch (error: any) {
-    clearTimeout(timeoutId);
-    if (error.name === 'AbortError') {
-      console.error('❌ API Timeout:', url);
-      throw new Error('Request timed out');
-    }
-    console.error(`❌ API Error:`, error.message);
-    throw error;
-  }
-}
