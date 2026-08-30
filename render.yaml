@@ -33,9 +33,24 @@ services:
         value: "5242880"
       - key: DEFAULT_PAYMENT_DEADLINE_MINUTES
         value: "30"
-  # ----------------------------------------------------------
-  # Admin Bot (Worker)
-  # ----------------------------------------------------------
+      - key: API_URL
+        sync: false
+      - key: APP_URL
+        sync: false
+
+  - type: worker
+    name: ale-kircha-customer-bot
+    runtime: node
+    plan: free
+    rootDir: apps/customer-bot
+    buildCommand: npm install && npm run build
+    startCommand: node dist/bot.js
+    envVars:
+      - key: CUSTOMER_BOT_TOKEN
+        sync: false
+      - key: API_URL
+        sync: false
+
   - type: worker
     name: ale-kircha-admin-bot
     runtime: node
@@ -49,7 +64,4 @@ services:
       - key: ADMIN_TELEGRAM_IDS
         sync: false
       - key: API_URL
-        fromService:
-          name: ale-kircha-api
-          type: web
-          envVarKey: RENDER_EXTERNAL_URL
+        sync: false
