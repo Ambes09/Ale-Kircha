@@ -1,7 +1,7 @@
-import { Bot, session, Context } from 'grammy';
-import { conversations, type ConversationFlavor } from '@grammyjs/conversations';
-import { type SessionFlavor } from 'grammy';
+import { Bot, session, Context, InlineKeyboard } from 'grammy';
+import { conversations } from '@grammyjs/conversations';
 import dotenv from 'dotenv';
+import http from 'http';
 
 dotenv.config();
 
@@ -14,19 +14,12 @@ if (!BOT_TOKEN) {
   process.exit(1);
 }
 
-interface SessionData {
-  language: string;
-  step: string;
-  currentPage: number;
-  data: Record<string, any>;
-}
+const bot = new Bot(BOT_TOKEN);
 
-type MyContext = Context & SessionFlavor<SessionData> & ConversationFlavor;
-
-const bot = new Bot<MyContext>(BOT_TOKEN);
+// ==================== SESSION ====================
 
 bot.use(session({
-  initial: (): SessionData => ({
+  initial: () => ({
     language: 'en',
     step: 'dashboard',
     currentPage: 1,
@@ -38,14 +31,22 @@ bot.use(conversations());
 
 // ==================== HELPERS ====================
 
-async function apiCall(endpoint: string, options: any = {}, ctx?: MyContext) {
-  const headers: any = { 'Content-Type': 'application/json', ...options.headers };
-  if (ctx?.from?.id) headers['x-telegram-id'] = ctx.from.id.toString();
-  const response = await fetch(`${API_URL}${endpoint}`, { ...options, headers });
+async function apiCall(endpoint: string, options: any = {}, ctx?: Context) {
+  const headers: any = {
+    'Content-Type': 'application/json',
+    ...options.headers,
+  };
+  if (ctx?.from?.id) {
+    headers['x-telegram-id'] = ctx.from.id.toString();
+  }
+  const response = await fetch(`${API_URL}${endpoint}`, {
+    ...options,
+    headers,
+  });
   return response.json();
 }
 
-async function isAdmin(ctx: MyContext): Promise<boolean> {
+async function isAdmin(ctx: Context): Promise<boolean> {
   const userId = ctx.from?.id.toString();
   if (!userId) return false;
   if (ADMIN_IDS.includes(userId)) return true;
@@ -73,7 +74,7 @@ function formatCurrency(amount: number): string {
 }
 
 function getStatusEmoji(status: string): string {
-  const map: Record<string, string> = {
+  const map: any = {
     'OPEN': '🟢', 'DRAFT': '📝', 'FULL': '🔴', 'CLOSED': '🔒',
     'COMPLETED': '✅', 'CANCELLED': '❌', 'EXPIRED': '⏰',
     'PAID': '✅', 'UNPAID': '⚠️', 'PENDING': '⏳', 'REJECTED': '❌',
@@ -95,40 +96,39 @@ bot.command('start', async (ctx) => {
   await showDashboard(ctx);
 });
 
+bot.command('menu', async (ctx) => {
+  if (!await isAdmin(ctx)) {
+    await ctx.reply('⛔ Unauthorized.');
+    return;
+  }
+  await showDashboard(ctx);
+});
+
 // ==================== DASHBOARD ====================
 
-async function showDashboard(ctx: MyContext) {
-  // Fetch real stats for dashboard
-  let stats = { pendingPayments: 0, pendingOrders: 0, activeGroups: 0, totalCustomers: 0, todayRevenue: 0 };
-  try {
-    const data = await apiCall('/api/v1/admin/stats', {}, ctx);
-    if (data.success) stats = data.data;
-  } catch (error) {}
+async function showDashboard(ctx: Context) {
+  const keyboard = new InlineKeyboard()
+    .text('📊 Stats', 'admin_stats')
+    .text('🛒 Groups', 'admin_groups')
+    .row()
+    .text('📦 Orders', 'admin_orders')
+    .text('💳 Payments', 'admin_payments')
+    .row()
+    .text('👥 Users', 'admin_users')
+    .text('📈 Reports', 'admin_reports')
+    .row()
+    .text('💰 Fees', 'admin_fees')
+    .text('⚙️ Settings', 'admin_settings')
+    .row()
+    .text('🔄 Refresh', 'admin_refresh');
 
   await ctx.reply(
-    `🏗️ *ALE KIRCHA ADMIN*\n━━━━━━━━━━━━━━━━━━━━━━\n\n` +
-    `📊 *Quick Stats*\n` +
-    `💳 Pending: ${stats.pendingPayments}\n` +
-    `📦 Orders: ${stats.pendingOrders}\n` +
-    `🛒 Groups: ${stats.activeGroups}\n` +
-    `👥 Users: ${stats.totalCustomers}\n` +
-    `💰 Revenue: ${formatCurrency(stats.todayRevenue)}\n\n` +
-    `Select an option:`,
+    '🏗️ *ALE KIRCHA ADMIN*\n━━━━━━━━━━━━━━━━━━━━━━\n\n' +
+    'Welcome to the Admin Dashboard!\n' +
+    'Select an option below to manage the system.',
     {
       parse_mode: 'Markdown',
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '📊 Stats', callback_data: 'admin_stats' }],
-          [{ text: '🛒 Groups', callback_data: 'admin_groups' }],
-          [{ text: '📦 Orders', callback_data: 'admin_orders' }],
-          [{ text: '💳 Payments', callback_data: 'admin_payments' }],
-          [{ text: '👥 Users', callback_data: 'admin_users' }],
-          [{ text: '🚚 Delivery', callback_data: 'admin_delivery' }],
-          [{ text: '📈 Reports', callback_data: 'admin_reports' }],
-          [{ text: '⚙️ Settings', callback_data: 'admin_settings' }],
-          [{ text: '🔄 Refresh', callback_data: 'admin_refresh' }],
-        ],
-      },
+      reply_markup: keyboard,
     }
   );
 }
@@ -141,35 +141,44 @@ bot.callbackQuery('admin_stats', async (ctx) => {
     return;
   }
   await ctx.answerCallbackQuery();
-  
+  await showStats(ctx);
+});
+
+async function showStats(ctx: Context) {
   try {
     const data = await apiCall('/api/v1/admin/stats', {}, ctx);
     const stats = data.success ? data.data : { pendingPayments: 0, pendingOrders: 0, activeGroups: 0, totalCustomers: 0, todayRevenue: 0 };
-    
-    await ctx.reply(
-      `📊 *SYSTEM STATISTICS*\n━━━━━━━━━━━━━━━━━━━━━━\n\n` +
-      `💳 *Pending Payments:* ${stats.pendingPayments}\n` +
-      `📦 *Pending Orders:* ${stats.pendingOrders}\n` +
-      `🛒 *Active Groups:* ${stats.activeGroups}\n` +
-      `👥 *Total Customers:* ${stats.totalCustomers}\n` +
-      `💰 *Today\'s Revenue:* ${formatCurrency(stats.todayRevenue)}\n\n` +
-      `📌 *Quick Actions:*\n` +
-      `• /groups - Manage groups\n` +
-      `• /orders - View orders\n` +
-      `• /users - Manage users`,
-      { parse_mode: 'Markdown' }
-    );
-  } catch (error) {
-    await ctx.reply('❌ Error fetching stats.', {
+
+    const text = `
+📊 *SYSTEM STATISTICS*
+━━━━━━━━━━━━━━━━━━━━━━
+
+💳 *Pending Payments:* ${stats.pendingPayments}
+📦 *Pending Orders:* ${stats.pendingOrders}
+🛒 *Active Groups:* ${stats.activeGroups}
+👥 *Total Customers:* ${stats.totalCustomers}
+💰 *Today\'s Revenue:* ${formatCurrency(stats.todayRevenue)}
+
+━━━━━━━━━━━━━━━━━━━━━━
+📌 *Quick Actions:*
+• /groups - Manage groups
+• /orders - View orders
+• /users - Manage users
+`;
+
+    await ctx.reply(text, {
+      parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
-          [{ text: '🔄 Retry', callback_data: 'admin_stats' }],
-          [{ text: '🔙 Back', callback_data: 'admin_back' }],
+          [{ text: '🔙 Back to Dashboard', callback_data: 'admin_back' }],
+          [{ text: '🔄 Refresh', callback_data: 'admin_stats' }],
         ],
       },
     });
+  } catch (error) {
+    await ctx.reply('❌ Error fetching stats.');
   }
-});
+}
 
 // ==================== GROUPS ====================
 
@@ -179,63 +188,62 @@ bot.callbackQuery('admin_groups', async (ctx) => {
     return;
   }
   await ctx.answerCallbackQuery();
-  
+  ctx.session.currentPage = 1;
+  await showGroups(ctx, 1);
+});
+
+async function showGroups(ctx: Context, page: number = 1) {
   try {
     const data = await apiCall('/api/v1/kircha/groups', {}, ctx);
-    
     let message = '🛒 *KIRCHA GROUPS*\n━━━━━━━━━━━━━━━━━━━━━━\n\n';
-    if (data.success && data.data && data.data.length > 0) {
-      for (const group of data.data) {
+    
+    if (data.success && data.data.length > 0) {
+      const groups = data.data.slice((page - 1) * 5, page * 5);
+      for (const group of groups) {
         const available = group.totalCapacity - group.reservedQuantity - group.soldQuantity;
         message += `*${group.nameEn}*\n`;
-        message += `📦 ${available}/${group.totalCapacity}\n`;
+        message += `📦 Available: ${available}/${group.totalCapacity}\n`;
         message += `💰 ${formatCurrency(group.unitPrice)}\n`;
         message += `📌 ${getStatusEmoji(group.status)} ${group.status}\n`;
-        if (group.deliveryDate) message += `📅 ${formatDate(group.deliveryDate)}\n`;
+        message += `📅 ${group.deliveryDate ? formatDate(group.deliveryDate) : 'TBD'}\n`;
         message += `━━━━━━━━━━━━━━━━━━━━━━\n\n`;
       }
+      
+      const totalPages = Math.ceil(data.data.length / 5);
+      const keyboard = new InlineKeyboard();
+      if (page > 1) keyboard.text('◀️ Prev', `groups_page_${page - 1}`);
+      keyboard.text(`📄 ${page}/${totalPages}`, 'groups_page_info');
+      if (page < totalPages) keyboard.text('Next ▶️', `groups_page_${page + 1}`);
+      keyboard.row();
+      keyboard.text('➕ Create Group', 'admin_create_group');
+      keyboard.text('🔙 Back', 'admin_back');
+      
+      await ctx.reply(message, {
+        parse_mode: 'Markdown',
+        reply_markup: keyboard,
+      });
     } else {
-      message += 'No Kircha groups available.\n\nClick "Create Group" to add one.';
+      await ctx.reply('No Kircha groups available.', {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '➕ Create Group', callback_data: 'admin_create_group' }],
+            [{ text: '🔙 Back', callback_data: 'admin_back' }],
+          ],
+        },
+      });
     }
-    
-    await ctx.reply(message, {
-      parse_mode: 'Markdown',
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '➕ Create Group', callback_data: 'admin_create_group' }],
-          [{ text: '🔙 Back', callback_data: 'admin_back' }],
-        ],
-      },
-    });
   } catch (error) {
     await ctx.reply('❌ Error fetching groups.');
   }
-});
+}
 
-// ==================== CREATE GROUP ====================
-
-bot.callbackQuery('admin_create_group', async (ctx) => {
+bot.callbackQuery(/groups_page_(\d+)/, async (ctx) => {
   if (!await isAdmin(ctx)) {
     await ctx.answerCallbackQuery('⛔ Unauthorized');
     return;
   }
   await ctx.answerCallbackQuery();
-  
-  await ctx.reply(
-    '🛒 *Create Kircha Group*\n\n' +
-    'Send group details in this format:\n\n' +
-    '`nameEn: Saturday Ox Kircha`\n' +
-    '`nameAm: ቅዳሜ የበሬ ቅርጫ`\n' +
-    '`kirchaTypeCode: OX`\n' +
-    '`totalCapacity: 8`\n' +
-    '`unitPrice: 35000`\n' +
-    '`halfPrice: 18000`\n' +
-    '`quarterPrice: 9000`\n' +
-    '`deliveryFee: 500`\n' +
-    '`deliveryDate: 2026-08-29T14:00:00Z`',
-    { parse_mode: 'Markdown' }
-  );
-  ctx.session.step = 'create_group';
+  await showGroups(ctx, parseInt(ctx.match[1]));
 });
 
 // ==================== ORDERS ====================
@@ -246,13 +254,18 @@ bot.callbackQuery('admin_orders', async (ctx) => {
     return;
   }
   await ctx.answerCallbackQuery();
-  
+  ctx.session.currentPage = 1;
+  await showOrders(ctx, 1);
+});
+
+async function showOrders(ctx: Context, page: number = 1) {
   try {
     const data = await apiCall('/api/v1/orders', {}, ctx);
-    
     let message = '📦 *ORDERS*\n━━━━━━━━━━━━━━━━━━━━━━\n\n';
+    
     if (data.success && data.data && data.data.length > 0) {
-      for (const order of data.data.slice(0, 10)) {
+      const orders = data.data.slice((page - 1) * 5, page * 5);
+      for (const order of orders) {
         message += `🆔 *${order.orderNumber || 'N/A'}*\n`;
         message += `👤 ${order.customer?.fullName || 'Unknown'}\n`;
         message += `💰 ${formatCurrency(order.totalAmount || 0)}\n`;
@@ -260,15 +273,102 @@ bot.callbackQuery('admin_orders', async (ctx) => {
         message += `📅 ${formatDate(order.createdAt)}\n`;
         message += `━━━━━━━━━━━━━━━━━━━━━━\n\n`;
       }
-      if (data.data.length > 10) message += `\n📌 Showing 10 of ${data.data.length} orders.`;
+      
+      const totalPages = Math.ceil(data.data.length / 5);
+      const keyboard = new InlineKeyboard();
+      if (page > 1) keyboard.text('◀️ Prev', `orders_page_${page - 1}`);
+      keyboard.text(`📄 ${page}/${totalPages}`, 'orders_page_info');
+      if (page < totalPages) keyboard.text('Next ▶️', `orders_page_${page + 1}`);
+      keyboard.row();
+      keyboard.text('🔙 Back', 'admin_back');
+      
+      await ctx.reply(message, {
+        parse_mode: 'Markdown',
+        reply_markup: keyboard,
+      });
     } else {
-      message += 'No orders found.';
+      await ctx.reply('No orders found.', {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🔙 Back', callback_data: 'admin_back' }],
+          ],
+        },
+      });
     }
-    
-    await ctx.reply(message, { parse_mode: 'Markdown' });
   } catch (error) {
     await ctx.reply('❌ Error fetching orders.');
   }
+}
+
+bot.callbackQuery(/orders_page_(\d+)/, async (ctx) => {
+  if (!await isAdmin(ctx)) {
+    await ctx.answerCallbackQuery('⛔ Unauthorized');
+    return;
+  }
+  await ctx.answerCallbackQuery();
+  await showOrders(ctx, parseInt(ctx.match[1]));
+});
+
+// ==================== USERS ====================
+
+bot.callbackQuery('admin_users', async (ctx) => {
+  if (!await isAdmin(ctx)) {
+    await ctx.answerCallbackQuery('⛔ Unauthorized');
+    return;
+  }
+  await ctx.answerCallbackQuery();
+  ctx.session.currentPage = 1;
+  await showUsers(ctx, 1);
+});
+
+async function showUsers(ctx: Context, page: number = 1) {
+  try {
+    const data = await apiCall('/api/v1/customers', {}, ctx);
+    let message = '👥 *USERS*\n━━━━━━━━━━━━━━━━━━━━━━\n\n';
+    
+    if (data.success && data.data && data.data.length > 0) {
+      const users = data.data.slice((page - 1) * 5, page * 5);
+      for (const user of users) {
+        message += `👤 *${user.fullName || 'Unknown'}*\n`;
+        message += `📱 ${user.user?.phone || 'No phone'}\n`;
+        message += `📌 ${getStatusEmoji(user.status)} ${user.status || 'ACTIVE'}\n`;
+        message += `📅 ${formatDate(user.registrationDate)}\n`;
+        message += `━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+      }
+      
+      const totalPages = Math.ceil(data.data.length / 5);
+      const keyboard = new InlineKeyboard();
+      if (page > 1) keyboard.text('◀️ Prev', `users_page_${page - 1}`);
+      keyboard.text(`📄 ${page}/${totalPages}`, 'users_page_info');
+      if (page < totalPages) keyboard.text('Next ▶️', `users_page_${page + 1}`);
+      keyboard.row();
+      keyboard.text('🔙 Back', 'admin_back');
+      
+      await ctx.reply(message, {
+        parse_mode: 'Markdown',
+        reply_markup: keyboard,
+      });
+    } else {
+      await ctx.reply('No users registered yet.', {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🔙 Back', callback_data: 'admin_back' }],
+          ],
+        },
+      });
+    }
+  } catch (error) {
+    await ctx.reply('❌ Error fetching users.');
+  }
+}
+
+bot.callbackQuery(/users_page_(\d+)/, async (ctx) => {
+  if (!await isAdmin(ctx)) {
+    await ctx.answerCallbackQuery('⛔ Unauthorized');
+    return;
+  }
+  await ctx.answerCallbackQuery();
+  await showUsers(ctx, parseInt(ctx.match[1]));
 });
 
 // ==================== PAYMENTS ====================
@@ -279,12 +379,15 @@ bot.callbackQuery('admin_payments', async (ctx) => {
     return;
   }
   await ctx.answerCallbackQuery();
-  
+  await showPayments(ctx);
+});
+
+async function showPayments(ctx: Context) {
   try {
     const data = await apiCall('/api/v1/payment/methods', {}, ctx);
-    
     let message = '💳 *PAYMENT METHODS*\n━━━━━━━━━━━━━━━━━━━━━━\n\n';
-    if (data.success && data.data && data.data.length > 0) {
+    
+    if (data.success && data.data.length > 0) {
       for (const method of data.data) {
         message += `🏦 *${method.name}*\n`;
         message += `📋 ${method.accountName}\n`;
@@ -308,141 +411,7 @@ bot.callbackQuery('admin_payments', async (ctx) => {
   } catch (error) {
     await ctx.reply('❌ Error fetching payment methods.');
   }
-});
-
-// ==================== ADD PAYMENT METHOD ====================
-
-bot.callbackQuery('admin_add_payment', async (ctx) => {
-  if (!await isAdmin(ctx)) {
-    await ctx.answerCallbackQuery('⛔ Unauthorized');
-    return;
-  }
-  await ctx.answerCallbackQuery();
-  
-  await ctx.reply(
-    '💳 *Add Payment Method*\n\n' +
-    'Send details in this format:\n\n' +
-    '`name: Telebirr`\n' +
-    '`accountName: Ale Kircha`\n' +
-    '`accountNumber: 0912345678`\n' +
-    '`active: true`',
-    { parse_mode: 'Markdown' }
-  );
-  ctx.session.step = 'add_payment';
-});
-
-// ==================== USERS ====================
-
-bot.callbackQuery('admin_users', async (ctx) => {
-  if (!await isAdmin(ctx)) {
-    await ctx.answerCallbackQuery('⛔ Unauthorized');
-    return;
-  }
-  await ctx.answerCallbackQuery();
-  
-  try {
-    const data = await apiCall('/api/v1/customers', {}, ctx);
-    
-    let message = '👥 *USERS*\n━━━━━━━━━━━━━━━━━━━━━━\n\n';
-    if (data.success && data.data && data.data.length > 0) {
-      for (const user of data.data.slice(0, 10)) {
-        message += `👤 *${user.fullName || 'Unknown'}*\n`;
-        message += `📱 ${user.user?.phone || 'No phone'}\n`;
-        message += `📌 ${getStatusEmoji(user.status)} ${user.status || 'ACTIVE'}\n`;
-        message += `📅 ${formatDate(user.registrationDate)}\n`;
-        message += `━━━━━━━━━━━━━━━━━━━━━━\n\n`;
-      }
-      if (data.data.length > 10) message += `\n📌 Showing 10 of ${data.data.length} users.`;
-    } else {
-      message += 'No users registered yet.';
-    }
-    
-    await ctx.reply(message, {
-      parse_mode: 'Markdown',
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '🚫 Ban User', callback_data: 'admin_ban_user' }],
-          [{ text: '🔙 Back', callback_data: 'admin_back' }],
-        ],
-      },
-    });
-  } catch (error) {
-    await ctx.reply('❌ Error fetching users.');
-  }
-});
-
-// ==================== BAN USER ====================
-
-bot.callbackQuery('admin_ban_user', async (ctx) => {
-  if (!await isAdmin(ctx)) {
-    await ctx.answerCallbackQuery('⛔ Unauthorized');
-    return;
-  }
-  await ctx.answerCallbackQuery();
-  
-  await ctx.reply(
-    '🚫 *Ban User*\n\n' +
-    'Send the Telegram ID to ban:\n\n' +
-    '`678862323`\n\n' +
-    'Optional reason:\n' +
-    '`678862323|Spamming`',
-    { parse_mode: 'Markdown' }
-  );
-  ctx.session.step = 'ban_user';
-});
-
-// ==================== DELIVERY ====================
-
-bot.callbackQuery('admin_delivery', async (ctx) => {
-  if (!await isAdmin(ctx)) {
-    await ctx.answerCallbackQuery('⛔ Unauthorized');
-    return;
-  }
-  await ctx.answerCallbackQuery();
-  
-  await ctx.reply(
-    '🚚 *DELIVERY MANAGEMENT*\n━━━━━━━━━━━━━━━━━━━━━━\n\n' +
-    'Select an option:',
-    {
-      parse_mode: 'Markdown',
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '📦 Pending Deliveries', callback_data: 'admin_delivery_pending' }],
-          [{ text: '🚚 In Transit', callback_data: 'admin_delivery_transit' }],
-          [{ text: '✅ Completed', callback_data: 'admin_delivery_completed' }],
-          [{ text: '🔙 Back', callback_data: 'admin_back' }],
-        ],
-      },
-    }
-  );
-});
-
-bot.callbackQuery('admin_delivery_pending', async (ctx) => {
-  if (!await isAdmin(ctx)) {
-    await ctx.answerCallbackQuery('⛔ Unauthorized');
-    return;
-  }
-  await ctx.answerCallbackQuery();
-  await ctx.reply('📦 *Pending Deliveries*\n\nFeature coming soon...');
-});
-
-bot.callbackQuery('admin_delivery_transit', async (ctx) => {
-  if (!await isAdmin(ctx)) {
-    await ctx.answerCallbackQuery('⛔ Unauthorized');
-    return;
-  }
-  await ctx.answerCallbackQuery();
-  await ctx.reply('🚚 *In Transit*\n\nFeature coming soon...');
-});
-
-bot.callbackQuery('admin_delivery_completed', async (ctx) => {
-  if (!await isAdmin(ctx)) {
-    await ctx.answerCallbackQuery('⛔ Unauthorized');
-    return;
-  }
-  await ctx.answerCallbackQuery();
-  await ctx.reply('✅ *Completed Deliveries*\n\nFeature coming soon...');
-});
+}
 
 // ==================== REPORTS ====================
 
@@ -452,10 +421,13 @@ bot.callbackQuery('admin_reports', async (ctx) => {
     return;
   }
   await ctx.answerCallbackQuery();
-  
+  await showReports(ctx);
+});
+
+async function showReports(ctx: Context) {
   await ctx.reply(
-    '📈 *REPORTS*\n━━━━━━━━━━━━━━━━━━━━━━\n\n' +
-    'Select a report:',
+    '📊 *REPORTS*\n━━━━━━━━━━━━━━━━━━━━━━\n\n' +
+    'Select a report to view:',
     {
       parse_mode: 'Markdown',
       reply_markup: {
@@ -463,6 +435,7 @@ bot.callbackQuery('admin_reports', async (ctx) => {
           [{ text: '💰 Sales Report', callback_data: 'admin_report_sales' }],
           [{ text: '📦 Order Report', callback_data: 'admin_report_orders' }],
           [{ text: '💳 Payment Report', callback_data: 'admin_report_payments' }],
+          [{ text: '🚚 Delivery Report', callback_data: 'admin_report_delivery' }],
           [{ text: '👥 Customer Report', callback_data: 'admin_report_customers' }],
           [{ text: '🛒 Group Report', callback_data: 'admin_report_groups' }],
           [{ text: '🔙 Back', callback_data: 'admin_back' }],
@@ -470,71 +443,7 @@ bot.callbackQuery('admin_reports', async (ctx) => {
       },
     }
   );
-});
-
-bot.callbackQuery('admin_report_sales', async (ctx) => {
-  if (!await isAdmin(ctx)) {
-    await ctx.answerCallbackQuery('⛔ Unauthorized');
-    return;
-  }
-  await ctx.answerCallbackQuery();
-  
-  try {
-    const data = await apiCall('/api/v1/admin/reports/sales?groupBy=daily', {}, ctx);
-    if (data.success) {
-      let message = '💰 *Sales Report*\n━━━━━━━━━━━━━━━━━━━━━━\n\n';
-      message += `📊 *Total Revenue:* ${formatCurrency(data.data.summary.totalRevenue)}\n`;
-      message += `📦 *Total Orders:* ${data.data.summary.totalOrders}\n`;
-      message += `📈 *Avg Order Value:* ${formatCurrency(data.data.summary.averageOrderValue)}\n\n`;
-      
-      message += '📊 *Revenue by Type:*\n';
-      for (const type of data.data.revenueByType.slice(0, 5)) {
-        message += `   ${type.name}: ${formatCurrency(type.revenue)} (${type.orders} orders)\n`;
-      }
-      await ctx.reply(message, { parse_mode: 'Markdown' });
-    } else {
-      await ctx.reply('❌ No sales data available.');
-    }
-  } catch (error) {
-    await ctx.reply('❌ Error fetching sales report.');
-  }
-});
-
-bot.callbackQuery('admin_report_orders', async (ctx) => {
-  if (!await isAdmin(ctx)) {
-    await ctx.answerCallbackQuery('⛔ Unauthorized');
-    return;
-  }
-  await ctx.answerCallbackQuery();
-  await ctx.reply('📦 *Order Report*\n\nFeature coming soon...');
-});
-
-bot.callbackQuery('admin_report_payments', async (ctx) => {
-  if (!await isAdmin(ctx)) {
-    await ctx.answerCallbackQuery('⛔ Unauthorized');
-    return;
-  }
-  await ctx.answerCallbackQuery();
-  await ctx.reply('💳 *Payment Report*\n\nFeature coming soon...');
-});
-
-bot.callbackQuery('admin_report_customers', async (ctx) => {
-  if (!await isAdmin(ctx)) {
-    await ctx.answerCallbackQuery('⛔ Unauthorized');
-    return;
-  }
-  await ctx.answerCallbackQuery();
-  await ctx.reply('👥 *Customer Report*\n\nFeature coming soon...');
-});
-
-bot.callbackQuery('admin_report_groups', async (ctx) => {
-  if (!await isAdmin(ctx)) {
-    await ctx.answerCallbackQuery('⛔ Unauthorized');
-    return;
-  }
-  await ctx.answerCallbackQuery();
-  await ctx.reply('🛒 *Group Report*\n\nFeature coming soon...');
-});
+}
 
 // ==================== SETTINGS ====================
 
@@ -544,142 +453,44 @@ bot.callbackQuery('admin_settings', async (ctx) => {
     return;
   }
   await ctx.answerCallbackQuery();
-  
-  await ctx.reply(
-    '⚙️ *SETTINGS*\n━━━━━━━━━━━━━━━━━━━━━━\n\n' +
-    'Select a setting to configure:',
-    {
-      parse_mode: 'Markdown',
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '🏢 Company Details', callback_data: 'admin_company_details' }],
-          [{ text: '💰 Fee Management', callback_data: 'admin_fee_management' }],
-          [{ text: '📱 Bot Info', callback_data: 'admin_bot_info' }],
-          [{ text: '🔙 Back', callback_data: 'admin_back' }],
-        ],
-      },
-    }
-  );
+  await showSettings(ctx);
 });
 
-bot.callbackQuery('admin_company_details', async (ctx) => {
-  if (!await isAdmin(ctx)) {
-    await ctx.answerCallbackQuery('⛔ Unauthorized');
-    return;
-  }
-  await ctx.answerCallbackQuery();
-  await ctx.reply(
-    '🏢 *Company Details*\n\n' +
-    'Feature coming soon...',
-    { parse_mode: 'Markdown' }
-  );
-});
+async function showSettings(ctx: Context) {
+  const text = `
+⚙️ *SYSTEM SETTINGS*
+━━━━━━━━━━━━━━━━━━━━━━
 
-bot.callbackQuery('admin_fee_management', async (ctx) => {
-  if (!await isAdmin(ctx)) {
-    await ctx.answerCallbackQuery('⛔ Unauthorized');
-    return;
-  }
-  await ctx.answerCallbackQuery();
-  
-  await ctx.reply(
-    '💰 *Fee Management*\n━━━━━━━━━━━━━━━━━━━━━━\n\n' +
-    'Configure fees and charges:',
-    {
-      parse_mode: 'Markdown',
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '🔄 Add Discount', callback_data: 'admin_add_discount' }],
-          [{ text: '💳 Service Charge', callback_data: 'admin_add_service' }],
-          [{ text: '📋 Tax Config', callback_data: 'admin_add_tax' }],
-          [{ text: '🚚 Delivery Charges', callback_data: 'admin_delivery_charges' }],
-          [{ text: '🔙 Back', callback_data: 'admin_back' }],
-        ],
-      },
-    }
-  );
-});
+📌 *General Settings*
+• Platform: Siga Kircha
+• Currency: ETB
+• Language: English/Amharic
 
-bot.callbackQuery('admin_add_discount', async (ctx) => {
-  if (!await isAdmin(ctx)) {
-    await ctx.answerCallbackQuery('⛔ Unauthorized');
-    return;
-  }
-  await ctx.answerCallbackQuery();
-  await ctx.reply(
-    '🔄 *Add Discount*\n\n' +
-    'Format:\n' +
-    '`nameEn: Weekend Discount`\n' +
-    '`valueType: PERCENTAGE`\n' +
-    '`value: 10`\n' +
-    '`applyTo: ALL`\n' +
-    '`priority: 1`',
-    { parse_mode: 'Markdown' }
-  );
-});
+🔐 *Security*
+• Admin IDs: ${ADMIN_IDS.join(', ')}
+• Session: Active
 
-bot.callbackQuery('admin_add_service', async (ctx) => {
-  if (!await isAdmin(ctx)) {
-    await ctx.answerCallbackQuery('⛔ Unauthorized');
-    return;
-  }
-  await ctx.answerCallbackQuery();
-  await ctx.reply(
-    '💳 *Add Service Charge*\n\n' +
-    'Format:\n' +
-    '`nameEn: Service Fee`\n' +
-    '`type: FIXED`\n' +
-    '`value: 50`\n' +
-    '`priority: 2`',
-    { parse_mode: 'Markdown' }
-  );
-});
+💳 *Payment Settings*
+• Methods: Telebirr, CBE, Awash Bank
+• Verification: Manual
 
-bot.callbackQuery('admin_add_tax', async (ctx) => {
-  if (!await isAdmin(ctx)) {
-    await ctx.answerCallbackQuery('⛔ Unauthorized');
-    return;
-  }
-  await ctx.answerCallbackQuery();
-  await ctx.reply(
-    '📋 *Add Tax*\n\n' +
-    'Format:\n' +
-    '`nameEn: VAT`\n' +
-    '`value: 15`\n' +
-    '`priority: 3`',
-    { parse_mode: 'Markdown' }
-  );
-});
+📱 *Bot Settings*
+• Customer Bot: @kirchaaleBot
+• Admin Bot: @Ale_kircha_admin_bot
+`;
 
-bot.callbackQuery('admin_delivery_charges', async (ctx) => {
-  if (!await isAdmin(ctx)) {
-    await ctx.answerCallbackQuery('⛔ Unauthorized');
-    return;
-  }
-  await ctx.answerCallbackQuery();
-  await ctx.reply(
-    '🚚 *Delivery Charges*\n\n' +
-    'Feature coming soon...',
-    { parse_mode: 'Markdown' }
-  );
-});
-
-bot.callbackQuery('admin_bot_info', async (ctx) => {
-  if (!await isAdmin(ctx)) {
-    await ctx.answerCallbackQuery('⛔ Unauthorized');
-    return;
-  }
-  await ctx.answerCallbackQuery();
-  await ctx.reply(
-    '📱 *Bot Information*\n\n' +
-    '🤖 *Customer Bot:* @kirchaaleBot\n' +
-    '🔐 *Admin Bot:* @Ale_kircha_admin_bot\n\n' +
-    '📡 *API URL:* https://ale-kircha-kb3m.onrender.com\n' +
-    '👥 *Admin IDs:* ' + ADMIN_IDS.join(', ') + '\n\n' +
-    '📊 *Status:* All systems operational',
-    { parse_mode: 'Markdown' }
-  );
-});
+  await ctx.reply(text, {
+    parse_mode: 'Markdown',
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '🏢 Company Details', callback_data: 'admin_company_details' }],
+        [{ text: '🏦 Bank Accounts', callback_data: 'admin_bank_accounts' }],
+        [{ text: '📱 Bot Info', callback_data: 'admin_bot_info' }],
+        [{ text: '🔙 Back', callback_data: 'admin_back' }],
+      ],
+    },
+  });
+}
 
 // ==================== BACK & REFRESH ====================
 
@@ -701,7 +512,33 @@ bot.callbackQuery('admin_refresh', async (ctx) => {
   await showDashboard(ctx);
 });
 
-// ==================== START ====================
+// ==================== BOT INFO ====================
+
+bot.callbackQuery('admin_bot_info', async (ctx) => {
+  if (!await isAdmin(ctx)) {
+    await ctx.answerCallbackQuery('⛔ Unauthorized');
+    return;
+  }
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    '📱 *Bot Information*\n\n' +
+    '🤖 *Customer Bot:* @kirchaaleBot\n' +
+    '🔐 *Admin Bot:* @Ale_kircha_admin_bot\n\n' +
+    '📡 *API URL:* http://localhost:4000\n' +
+    '👥 *Admin IDs:* ' + ADMIN_IDS.join(', ') + '\n\n' +
+    '📊 *Status:* All systems operational',
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🔙 Back to Settings', callback_data: 'admin_settings' }],
+        ],
+      },
+    }
+  );
+});
+
+// ==================== START BOT ====================
 
 await bot.init();
 
@@ -713,58 +550,18 @@ console.log('🤖 Admin Bot is running...');
 console.log(`📊 API URL: ${API_URL}`);
 console.log(`👥 Admin IDs: ${ADMIN_IDS.join(', ')}`);
 
-// ==================== HEALTH CHECK SERVER ====================
-
-import { createServer } from 'http';
+// ==================== HTTP SERVER FOR RENDER HEALTH CHECK ====================
 
 const PORT = process.env.PORT || 10000;
 
-const server = createServer((req, res) => {
+http.createServer((req, res) => {
   if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', bot: 'Ale Kircha Admin Bot' }));
+    res.end(JSON.stringify({ status: 'ok', service: 'admin-bot', timestamp: new Date().toISOString() }));
   } else {
     res.writeHead(404);
     res.end('Not Found');
   }
-});
-
-server.listen(PORT, () => {
-  console.log(`🟢 Health check server running on port ${PORT}`);
-});
-
-// Keep the server alive
-process.on('SIGTERM', () => {
-  server.close(() => {
-    console.log('🛑 Server shutting down...');
-    process.exit(0);
-  });
-});
-
-// ==================== HEALTH CHECK SERVER ====================
-
-import { createServer } from 'http';
-
-const PORT = process.env.PORT || 10000;
-
-const server = createServer((req, res) => {
-  if (req.url === '/health') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', bot: 'Ale Kircha Admin Bot' }));
-  } else {
-    res.writeHead(404);
-    res.end('Not Found');
-  }
-});
-
-server.listen(PORT, () => {
-  console.log(`🟢 Health check server running on port ${PORT}`);
-});
-
-// Keep the server alive
-process.on('SIGTERM', () => {
-  server.close(() => {
-    console.log('🛑 Server shutting down...');
-    process.exit(0);
-  });
+}).listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ Health check server running on port ${PORT}`);
 });
