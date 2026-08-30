@@ -1,5 +1,6 @@
 import { Bot, session, Context, InlineKeyboard } from 'grammy';
-import { conversations } from '@grammyjs/conversations';
+import { conversations, type ConversationFlavor } from '@grammyjs/conversations';
+import { type SessionFlavor } from 'grammy';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -169,6 +170,31 @@ bot.callbackQuery('admin_refresh', async (ctx) => {
   }
   await ctx.answerCallbackQuery('🔄 Refreshing...');
   await showDashboard(ctx);
+});
+
+// ==================== GROUPS ====================
+
+bot.callbackQuery('admin_groups', async (ctx) => {
+  if (!await isAdmin(ctx)) {
+    await ctx.answerCallbackQuery('⛔ Unauthorized');
+    return;
+  }
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/kircha/groups', {}, ctx);
+    let message = '🛒 *Groups*\n\n';
+    if (data.success && data.data && data.data.length > 0) {
+      for (const group of data.data) {
+        const available = group.totalCapacity - group.reservedQuantity - group.soldQuantity;
+        message += `*${group.nameEn}*\n📦 ${available}/${group.totalCapacity}\n💰 ${formatCurrency(group.unitPrice)}\n📌 ${group.status}\n\n`;
+      }
+    } else {
+      message += 'No groups found.';
+    }
+    await ctx.reply(message, { parse_mode: 'Markdown' });
+  } catch (error) {
+    await ctx.reply('❌ Error fetching groups.');
+  }
 });
 
 // ==================== START ====================

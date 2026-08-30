@@ -1,5 +1,6 @@
 import { Bot, session, Context, InlineKeyboard } from 'grammy';
-import { conversations } from '@grammyjs/conversations';
+import { conversations, type ConversationFlavor } from '@grammyjs/conversations';
+import { type SessionFlavor } from 'grammy';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -25,7 +26,7 @@ type MyContext = Context & SessionFlavor<SessionData> & ConversationFlavor;
 
 const bot = new Bot<MyContext>(BOT_TOKEN);
 
-// Session middleware with explicit typing
+// Session middleware
 bot.use(session({
   initial: (): SessionData => ({
     language: 'en',
