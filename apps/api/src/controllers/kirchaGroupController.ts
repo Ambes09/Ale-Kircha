@@ -33,7 +33,7 @@ export class KirchaGroupController {
     const groups = await prisma.kirchaGroup.findMany({
       where: {
         status: 'OPEN',
-        totalCapacity: { gt: 0 },
+        maxQuota: { gt: 0 },
         registrationCloseAt: { gt: new Date() }
       },
       include: {
@@ -85,19 +85,19 @@ export class KirchaGroupController {
       data: {
         groupCode,
         kirchaTypeId: body.kirchaTypeId,
-        nameEn: body.nameEn,
+        name: body.nameEn,
         nameAm: body.nameAm || body.nameEn,
         descriptionEn: body.descriptionEn,
         descriptionAm: body.descriptionAm,
         status: body.status || 'DRAFT',
-        totalCapacity: body.totalCapacity || 0,
-        unitPrice: body.unitPrice || 0,
+        maxQuota: body.maxQuota || 0,
+        unitPrice: Number(Number(body.unitPrice)) || 0,
         halfPrice: body.halfPrice || null,
         quarterPrice: body.quarterPrice || null,
-        deliveryFee: body.deliveryFee || 0,
-        discount: body.discount || 0,
-        tax: body.tax || 0,
-        additionalFees: body.additionalFees || 0,
+        deliveryFee: Number(Number(body.deliveryFee)) || 0,
+        discount: Number(Number(body.discount)) || 0,
+        tax: Number(Number(body.tax)) || 0,
+        additionalFee: Number(Number(body.additionalFee)) || 0,
         registrationOpenAt: body.registrationOpenAt || new Date(),
         registrationCloseAt: body.registrationCloseAt || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
         slaughterDate: body.slaughterDate || null,
@@ -166,15 +166,15 @@ export class KirchaGroupController {
       if (!group) throw new NotFoundError('Kircha group');
       if (group.status !== 'OPEN') throw new ConflictError('Group is not open');
       
-      const available = group.totalCapacity - group.reservedQuantity - group.soldQuantity;
+      const available = group.maxQuota - group.reservedQuota - group.soldQuota;
       if (quantity > available) throw new ConflictError('Not enough capacity');
       
-      const unitPrice = portionType === 'HALF' ? (group.halfPrice || group.unitPrice / 2) :
-                        portionType === 'QUARTER' ? (group.quarterPrice || group.unitPrice / 4) :
-                        group.unitPrice;
+      const unitPrice = portionType === 'HALF' ? (group.halfPrice || Number(Number(group.unitPrice)) / 2) :
+                        portionType === 'QUARTER' ? (group.quarterPrice || Number(Number(group.unitPrice)) / 4) :
+                        Number(Number(group.unitPrice));
       
       const subtotal = unitPrice * quantity;
-      const totalAmount = subtotal + group.deliveryFee + group.additionalFees - group.discount + group.tax;
+      const totalAmount = subtotal + Number(Number(group.deliveryFee)) + Number(Number(group.additionalFee)) - Number(Number(group.discount)) + Number(Number(group.tax));
       
       const membership = await tx.kirchaGroupMembership.create({
         data: {
@@ -184,10 +184,10 @@ export class KirchaGroupController {
           quantity,
           unitPrice,
           subtotal,
-          discount: group.discount,
-          deliveryFee: group.deliveryFee,
-          additionalFees: group.additionalFees,
-          tax: group.tax,
+          discount: Number(Number(group.discount)),
+          deliveryFee: Number(Number(group.deliveryFee)),
+          additionalFee: Number(Number(group.additionalFee)),
+          tax: Number(Number(group.tax)),
           totalAmount,
           reservationStatus: 'RESERVED'
         }
@@ -196,7 +196,7 @@ export class KirchaGroupController {
       await tx.kirchaGroup.update({
         where: { id },
         data: {
-          reservedQuantity: group.reservedQuantity + quantity
+          reservedQuota: group.reservedQuota + quantity
         }
       });
       
@@ -228,7 +228,7 @@ export class KirchaGroupController {
         await tx.kirchaGroup.update({
           where: { id: fromGroupId },
           data: {
-            reservedQuantity: oldGroup.reservedQuantity - (quantity || membership.quantity)
+            reservedQuota: oldGroup.reservedQuota - (quantity || membership.quantity)
           }
         });
       }
@@ -243,13 +243,13 @@ export class KirchaGroupController {
           customerId,
           portionType: membership.portionType,
           quantity: quantity || membership.quantity,
-          unitPrice: newGroup.unitPrice,
-          subtotal: (quantity || membership.quantity) * newGroup.unitPrice,
-          discount: newGroup.discount,
-          deliveryFee: newGroup.deliveryFee,
-          additionalFees: newGroup.additionalFees,
-          tax: newGroup.tax,
-          totalAmount: (quantity || membership.quantity) * newGroup.unitPrice + newGroup.deliveryFee + newGroup.additionalFees - newGroup.discount + newGroup.tax,
+          unitPrice: Number(Number(newGroup.unitPrice)),
+          subtotal: (quantity || membership.quantity) * Number(Number(newGroup.unitPrice)),
+          discount: Number(Number(newGroup.discount)),
+          deliveryFee: Number(Number(newGroup.deliveryFee)),
+          additionalFee: Number(Number(newGroup.additionalFee)),
+          tax: Number(Number(newGroup.tax)),
+          totalAmount: (quantity || membership.quantity) * Number(Number(newGroup.unitPrice)) + Number(Number(newGroup.deliveryFee)) + Number(Number(newGroup.additionalFee)) - Number(Number(newGroup.discount)) + Number(Number(newGroup.tax)),
           reservationStatus: 'RESERVED'
         }
       });
@@ -257,7 +257,7 @@ export class KirchaGroupController {
       await tx.kirchaGroup.update({
         where: { id: toGroupId },
         data: {
-          reservedQuantity: newGroup.reservedQuantity + (quantity || membership.quantity)
+          reservedQuota: newGroup.reservedQuota + (quantity || membership.quantity)
         }
       });
       

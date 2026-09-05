@@ -1,0 +1,2360 @@
+import { Bot } from 'grammy';
+import dotenv from 'dotenv';
+import http from 'http';
+
+dotenv.config();
+
+const BOT_TOKEN = process.env.ADMIN_BOT_TOKEN;
+const ADMIN_IDS = (process.env.ADMIN_TELEGRAM_IDS || '').split(',').map(id => id.trim());
+const PORT = parseInt(process.env.PORT || '10002');
+
+if (!BOT_TOKEN) {
+  console.error('❌ ADMIN_BOT_TOKEN is required!');
+  process.exit(1);
+}
+
+const bot = new Bot(BOT_TOKEN);
+
+// ============================================================
+// ADMIN AUTH
+// ============================================================
+
+bot.use(async (ctx, next) => {
+  const userId = ctx.from?.id?.toString();
+  if (!userId) {
+    await ctx.reply('🔐 Access denied.');
+    return;
+  }
+  if (!ADMIN_IDS.includes(userId)) {
+    await ctx.reply('🔐 Access denied. You are not authorized.');
+    return;
+  }
+  await next();
+});
+
+// ============================================================
+// HELPERS
+// ============================================================
+
+async function apiCall(endpoint: string) {
+  const API_URL = process.env.API_URL || 'http://localhost:4000';
+  try {
+    const res = await fetch(`${API_URL}${endpoint}`);
+    return await res.json();
+  } catch {
+    return { success: false, error: 'Network error' };
+  }
+}
+
+function formatCurrency(amount: number): string {
+  return `${amount.toLocaleString()} ETB`;
+}
+
+// ============================================================
+// MAIN MENU
+// ============================================================
+
+async function showMainMenu(ctx: any) {
+  const menuText = '🏗️ *ALE KIRCHA ADMIN*\n\nSelect option:';
+  const menuKeyboard = {
+    inline_keyboard: [
+      [{ text: '📊 Dashboard', callback_data: 'admin_dashboard' }, { text: '👥 Users', callback_data: 'admin_customers' }],
+      [{ text: '🥩 Groups', callback_data: 'admin_groups' }, { text: '📦 Orders', callback_data: 'admin_orders' }],
+      [{ text: '💳 Payments', callback_data: 'admin_payments' }, { text: '🔄 Refunds', callback_data: 'admin_refunds' }],
+      [{ text: '🚚 Delivery', callback_data: 'admin_delivery' }, { text: '📈 Reports', callback_data: 'admin_reports' }],
+      [{ text: '💵 Fees', callback_data: 'admin_fees' }, { text: '⚙️ Settings', callback_data: 'admin_settings' }],
+      [{ text: '👤 Admins', callback_data: 'admin_users' }, { text: '📋 Audit', callback_data: 'admin_audit' }],
+      [{ text: '📞 Support', callback_data: 'admin_support' }, { text: '❓ FAQ', callback_data: 'admin_faq' }],
+      [{ text: '📜 Terms', callback_data: 'admin_terms' }, { text: 'ℹ️ About', callback_data: 'admin_about' }],
+      [{ text: '🔔 Notifications', callback_data: 'admin_notifications' }, { text: '🏦 Banks', callback_data: 'admin_banks' }],
+      [{ text: '🌐 Language', callback_data: 'admin_language' }],
+    ],
+  };
+
+  try {
+    await ctx.reply(menuText, { parse_mode: 'Markdown', reply_markup: menuKeyboard });
+  } catch (error) {
+    await ctx.reply('❌ Failed to load menu.');
+  }
+}
+
+bot.command('start', async (ctx) => { await showMainMenu(ctx); });
+bot.command('menu', async (ctx) => { await showMainMenu(ctx); });
+
+// ============================================================
+// BACK TO MENU
+// ============================================================
+
+bot.callbackQuery('admin_menu', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await showMainMenu(ctx);
+});
+
+// ============================================================
+// DASHBOARD
+// ============================================================
+
+bot.callbackQuery('admin_dashboard', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/admin/stats');
+    const s = data.data || {};
+    const msg = '📊 *DASHBOARD*\n\n' +
+      `👥 Users: ${s.users || 0}\n` +
+      `🥩 Groups: ${s.groups || 0}\n` +
+      `📦 Orders: ${s.orders || 0}\n` +
+      `💳 Payments: ${s.payments || 0}\n` +
+      `💰 Revenue: ${formatCurrency(s.revenue || 0)}\n` +
+      `📅 ${new Date().toLocaleDateString()}`;
+    await ctx.reply(msg, { parse_mode: 'Markdown' });
+  } catch (error) {
+    await ctx.reply('❌ Failed to load dashboard.');
+  }
+});
+
+// ============================================================
+// CUSTOMERS
+// ============================================================
+
+bot.callbackQuery('admin_customers', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/customers');
+    const customers = data.data || [];
+    let msg = '👥 *CUSTOMERS*\n\n';
+    if (customers.length) {
+      for (const c of customers.slice(0, 10)) {
+        msg += `📛 ${c.fullName || 'N/A'}\n   📱 ${c.user?.phone || 'N/A'}\n\n`;
+      }
+    } else {
+      msg += 'No customers found.';
+    }
+    await ctx.reply(msg, { parse_mode: 'Markdown' });
+  } catch (error) {
+    await ctx.reply('❌ Failed to load customers.');
+  }
+});
+
+// ============================================================
+// GROUPS
+// ============================================================
+
+bot.callbackQuery('admin_groups', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/kircha/groups');
+    const groups = data.data || [];
+    let msg = '🥩 *GROUPS*\n\n';
+    if (groups.length) {
+      for (const g of groups.slice(0, 10)) {
+        const avail = (g.maxQuota || 0) - (g.consumedQuota || 0);
+        msg += `📌 ${g.name || 'N/A'}\n`;
+        msg += `   📦 ${avail.toFixed(1)}/${g.maxQuota || 0}\n`;
+        msg += `   💰 ${formatCurrency(g.fullPrice || 0)}\n\n`;
+      }
+    } else {
+      msg += 'No groups found.';
+    }
+    await ctx.reply(msg, { parse_mode: 'Markdown' });
+  } catch (error) {
+    await ctx.reply('❌ Failed to load groups.');
+  }
+});
+
+// ============================================================
+// ORDERS
+// ============================================================
+
+bot.callbackQuery('admin_orders', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/orders');
+    const orders = data.data || [];
+    let msg = '📦 *ORDERS*\n\n';
+    if (orders.length) {
+      for (const o of orders.slice(0, 10)) {
+        msg += `📌 ${o.orderNumber || 'N/A'}\n`;
+        msg += `   💰 ${formatCurrency(o.totalAmount || 0)}\n`;
+        msg += `   👤 ${o.customerName || 'N/A'}\n\n`;
+      }
+    } else {
+      msg += 'No orders found.';
+    }
+    await ctx.reply(msg, { parse_mode: 'Markdown' });
+  } catch (error) {
+    await ctx.reply('❌ Failed to load orders.');
+  }
+});
+
+// ============================================================
+// PAYMENTS
+// ============================================================
+
+bot.callbackQuery('admin_payments', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/payments');
+    const payments = data.data || [];
+    let msg = '💳 *PAYMENTS*\n\n';
+    if (payments.length) {
+      for (const p of payments.slice(0, 10)) {
+        msg += `📌 ${p.paymentId || p.id}\n`;
+        msg += `   💰 ${formatCurrency(p.amount || 0)}\n`;
+        msg += `   👤 ${p.customerName || 'N/A'}\n\n`;
+      }
+    } else {
+      msg += 'No payments found.';
+    }
+    await ctx.reply(msg, { parse_mode: 'Markdown' });
+  } catch (error) {
+    await ctx.reply('❌ Failed to load payments.');
+  }
+});
+
+// ============================================================
+// REFUNDS
+// ============================================================
+
+bot.callbackQuery('admin_refunds', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/refunds');
+    const refunds = data.data || [];
+    let msg = '🔄 *REFUNDS*\n\n';
+    if (refunds.length) {
+      for (const r of refunds.slice(0, 10)) {
+        msg += `📌 ${r.refundId || r.id}\n`;
+        msg += `   💰 ${formatCurrency(r.netRefund || 0)}\n`;
+        msg += `   👤 ${r.customerName || 'N/A'}\n\n`;
+      }
+    } else {
+      msg += 'No refunds found.';
+    }
+    await ctx.reply(msg, { parse_mode: 'Markdown' });
+  } catch (error) {
+    await ctx.reply('❌ Failed to load refunds.');
+  }
+});
+
+// ============================================================
+// LANGUAGE
+// ============================================================
+
+bot.callbackQuery('admin_language', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    '🌐 *LANGUAGE*\n\n🇬🇧 English\n🇪🇹 አማርኛ',
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🇬🇧 English', callback_data: 'lang_en' }],
+          [{ text: '🇪🇹 አማርኛ', callback_data: 'lang_am' }],
+        ],
+      },
+    }
+  );
+});
+
+bot.callbackQuery('lang_en', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply('✅ Language set to English.');
+});
+
+bot.callbackQuery('lang_am', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply('✅ ቋንቋ ወደ አማርኛ ተቀየረ።');
+});
+
+// ============================================================
+// "COMING SOON" HANDLERS
+// ============================================================
+
+;
+
+  bot.callbackQuery(callback, async (ctx) => {
+    await ctx.answerCallbackQuery();
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]],
+      },
+    });
+  });
+});
+
+// ============================================================
+// START BOT
+// ============================================================
+
+console.log('🤖 Admin Bot running');
+console.log('👥 Admins:', ADMIN_IDS);
+console.log(`🔗 Health: http://localhost:${PORT}/health`);
+
+bot.start();
+
+// Health check server
+http.createServer((req, res) => {
+  if (req.url === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok', service: 'admin-bot', port: PORT }));
+  } else {
+    res.writeHead(404);
+    res.end('Not Found');
+  }
+}).listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ Health check: http://localhost:${PORT}/health`);
+});
+
+// ============================================================
+// ADMIN DELIVERY
+// ============================================================
+
+bot.callbackQuery('admin_delivery', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/deliveries');
+    const deliveries = data.data || [];
+    let msg = '🚚 *DELIVERY MANAGEMENT*\n\n';
+    
+    if (deliveries.length) {
+      for (const d of deliveries.slice(0, 10)) {
+        const emoji = d.status === 'PENDING' ? '🟡' : 
+                      d.status === 'OUT_FOR_DELIVERY' ? '🚚' : 
+                      d.status === 'DELIVERED' ? '✅' : '📌';
+        msg += `${emoji} *${d.orderNumber || 'N/A'}*\n`;
+        msg += `   👤 ${d.customername || d.customerName || 'N/A'}\n`;
+        msg += `   📍 ${d.deliveryaddress || d.deliveryAddress || 'N/A'}\n`;
+        msg += `   🔹 ${d.status}\n\n`;
+      }
+      if (deliveries.length > 10) msg += `... ${deliveries.length - 10} more\n`;
+    } else {
+      msg += 'No deliveries found.';
+    }
+    
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '📋 Pending', callback_data: 'delivery_pending' }],
+          [{ text: '🚚 Out for Delivery', callback_data: 'delivery_out' }],
+          [{ text: '✅ Delivered', callback_data: 'delivery_delivered' }],
+          [{ text: '🔙 Menu', callback_data: 'admin_menu' }],
+        ],
+      },
+    });
+  } catch (error) {
+    await ctx.reply('❌ Failed to load deliveries.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]] },
+    });
+  }
+});
+
+// Delivery sub-filters
+bot.callbackQuery('delivery_pending', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/deliveries');
+    const pending = (data.data || []).filter((d: any) => d.status === 'PENDING' || d.status === 'UNASSIGNED');
+    let msg = '📋 *PENDING DELIVERIES*\n\n';
+    if (pending.length) {
+      for (const d of pending.slice(0, 10)) {
+        msg += `📌 ${d.orderNumber || 'N/A'}\n   👤 ${d.customername || d.customerName || 'N/A'}\n\n`;
+      }
+    } else {
+      msg += 'No pending deliveries.';
+    }
+    await ctx.reply(msg, { parse_mode: 'Markdown' });
+  } catch {
+    await ctx.reply('❌ Failed to load.');
+  }
+});
+
+bot.callbackQuery('delivery_out', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/deliveries');
+    const out = (data.data || []).filter((d: any) => d.status === 'OUT_FOR_DELIVERY' || d.status === 'ASSIGNED');
+    let msg = '🚚 *OUT FOR DELIVERY*\n\n';
+    if (out.length) {
+      for (const d of out.slice(0, 10)) {
+        msg += `📌 ${d.orderNumber || 'N/A'}\n   👤 ${d.customername || d.customerName || 'N/A'}\n\n`;
+      }
+    } else {
+      msg += 'No deliveries out.';
+    }
+    await ctx.reply(msg, { parse_mode: 'Markdown' });
+  } catch {
+    await ctx.reply('❌ Failed to load.');
+  }
+});
+
+bot.callbackQuery('delivery_delivered', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/deliveries');
+    const delivered = (data.data || []).filter((d: any) => d.status === 'DELIVERED' || d.status === 'COMPLETED');
+    let msg = '✅ *DELIVERED ORDERS*\n\n';
+    if (delivered.length) {
+      for (const d of delivered.slice(0, 10)) {
+        msg += `📌 ${d.orderNumber || 'N/A'}\n   👤 ${d.customername || d.customerName || 'N/A'}\n   📅 ${new Date(d.updatedAt).toLocaleDateString()}\n\n`;
+      }
+    } else {
+      msg += 'No delivered orders.';
+    }
+    await ctx.reply(msg, { parse_mode: 'Markdown' });
+  } catch {
+    await ctx.reply('❌ Failed to load.');
+  }
+});
+
+// ============================================================
+// ADMIN REPORTS
+// ============================================================
+
+bot.callbackQuery('admin_reports', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    '📈 *REPORTS*\n\nSelect a report:',
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '📊 Sales', callback_data: 'report_sales' }, { text: '📦 Orders', callback_data: 'report_orders' }],
+          [{ text: '💳 Payments', callback_data: 'report_payments' }, { text: '🚚 Delivery', callback_data: 'report_delivery' }],
+          [{ text: '👥 Customers', callback_data: 'report_customers' }, { text: '🥩 Groups', callback_data: 'report_groups' }],
+          [{ text: '🔙 Menu', callback_data: 'admin_menu' }],
+        ],
+      },
+    }
+  );
+});
+
+// Report generators
+async function generateReport(ctx: any, endpoint: string, title: string) {
+  try {
+    const data = await apiCall(endpoint);
+    const d = data.data || {};
+    let msg = `📊 *${title}*\n\n`;
+    if (Object.keys(d).length) {
+      for (const [key, value] of Object.entries(d)) {
+        msg += `📌 ${key}: ${value}\n`;
+      }
+    } else {
+      msg += 'No data available.';
+    }
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Back', callback_data: 'admin_reports' }]],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to load report.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Back', callback_data: 'admin_reports' }]] },
+    });
+  }
+}
+
+bot.callbackQuery('report_sales', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await generateReport(ctx, '/api/v1/admin/reports/sales', 'SALES REPORT');
+});
+
+bot.callbackQuery('report_orders', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await generateReport(ctx, '/api/v1/admin/reports/orders', 'ORDER REPORT');
+});
+
+bot.callbackQuery('report_payments', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await generateReport(ctx, '/api/v1/admin/reports/payments', 'PAYMENT REPORT');
+});
+
+bot.callbackQuery('report_delivery', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await generateReport(ctx, '/api/v1/admin/reports/delivery', 'DELIVERY REPORT');
+});
+
+bot.callbackQuery('report_customers', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await generateReport(ctx, '/api/v1/admin/reports/customers', 'CUSTOMER REPORT');
+});
+
+bot.callbackQuery('report_groups', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await generateReport(ctx, '/api/v1/admin/reports/groups', 'GROUP REPORT');
+});
+
+// ============================================================
+// ADMIN SETTINGS
+// ============================================================
+
+bot.callbackQuery('admin_settings', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    '⚙️ *SETTINGS*\n\nSelect a setting to view:',
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🌐 Language', callback_data: 'settings_language' }],
+          [{ text: '📋 Group Rules', callback_data: 'settings_rules' }],
+          [{ text: '📅 Expiry', callback_data: 'settings_expiry' }],
+          [{ text: '👥 Members', callback_data: 'settings_members' }],
+          [{ text: '📊 Max Groups', callback_data: 'settings_max_groups' }],
+          [{ text: '🔙 Menu', callback_data: 'admin_menu' }],
+        ],
+      },
+    }
+  );
+});
+
+// Settings handlers
+async function showSetting(ctx: any, key: string, label: string) {
+  try {
+    const data = await apiCall('/api/v1/settings');
+    const settings = data.data || {};
+    const value = settings[key] || 'Not configured';
+    await ctx.reply(`⚙️ *${label}*\n\nCurrent value: ${value}`, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '✏️ Edit', callback_data: `settings_edit_${key}` }],
+          [{ text: '🔙 Back', callback_data: 'admin_settings' }],
+        ],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to load setting.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Back', callback_data: 'admin_settings' }]] },
+    });
+  }
+}
+
+bot.callbackQuery('settings_language', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await showSetting(ctx, 'language', 'Language');
+});
+
+bot.callbackQuery('settings_rules', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/admin/group-rules');
+    const rules = data.data || [];
+    let msg = '📋 *GROUP RULES*\n\n';
+    for (const r of rules) {
+      msg += `📌 ${r.descriptionEn || r.ruleKey}: ${r.ruleValue}\n`;
+    }
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Back', callback_data: 'admin_settings' }]],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to load rules.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Back', callback_data: 'admin_settings' }]] },
+    });
+  }
+});
+
+bot.callbackQuery('settings_expiry', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await showSetting(ctx, 'group_expiry_days', 'Group Expiry (days)');
+});
+
+bot.callbackQuery('settings_members', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await showSetting(ctx, 'max_members_per_group', 'Max Members per Group');
+});
+
+bot.callbackQuery('settings_max_groups', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await showSetting(ctx, 'max_groups_per_user', 'Max Groups per User');
+});
+
+// ============================================================
+// ADMIN FAQ
+// ============================================================
+
+bot.callbackQuery('admin_faq', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/faq');
+    const faqs = data.data || [];
+    let msg = '❓ *FAQ MANAGEMENT*\n\n';
+    if (faqs.length) {
+      for (const f of faqs.slice(0, 10)) {
+        msg += `📌 ${f.questionEn || 'N/A'}\n`;
+        msg += `   ${f.isActive ? '🟢 Active' : '🔴 Inactive'}\n\n`;
+      }
+      if (faqs.length > 10) msg += `... ${faqs.length - 10} more\n`;
+    } else {
+      msg += 'No FAQs found.';
+    }
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '➕ Add FAQ', callback_data: 'faq_add' }],
+          [{ text: '🔙 Menu', callback_data: 'admin_menu' }],
+        ],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to load FAQs.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]] },
+    });
+  }
+});
+
+bot.callbackQuery('faq_add', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    '➕ *ADD FAQ*\n\nSend the FAQ details:\n\n' +
+    '📌 Question (English): How do I join a group?\n' +
+    '📌 Question (Amharic): ቅርጫ ቡድን እንዴት እቀላቀላለሁ?\n' +
+    '📌 Answer (English): Open available groups and click Join.\n' +
+    '📌 Answer (Amharic): የሚገኙ ቡድኖችን ይክፈቱ እና ተቀላቀል ይጫኑ።',
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Back', callback_data: 'admin_faq' }]],
+      },
+    }
+  );
+});
+
+// ============================================================
+// ADMIN SUPPORT
+// ============================================================
+
+bot.callbackQuery('admin_support', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/support/tickets');
+    const tickets = data.data || [];
+    let msg = '📞 *SUPPORT TICKETS*\n\n';
+    if (tickets.length) {
+      for (const t of tickets.slice(0, 10)) {
+        const emoji = t.status === 'OPEN' ? '🟡' : t.status === 'RESOLVED' ? '✅' : '⚪';
+        msg += `${emoji} *${t.ticketId || t.id}*\n`;
+        msg += `   👤 ${t.customerName || 'N/A'}\n`;
+        msg += `   📌 ${t.category || 'General'}\n\n`;
+      }
+      if (tickets.length > 10) msg += `... ${tickets.length - 10} more\n`;
+    } else {
+      msg += 'No support tickets found.';
+    }
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to load support tickets.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]] },
+    });
+  }
+});
+
+// ============================================================
+// ADMIN TERMS
+// ============================================================
+
+bot.callbackQuery('admin_terms', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/terms');
+    const terms = data.data || [];
+    let msg = '📜 *TERMS MANAGEMENT*\n\n';
+    if (terms.length) {
+      for (const t of terms.slice(0, 10)) {
+        msg += `📌 v${t.version || '1.0'}\n`;
+        msg += `   📅 ${new Date(t.effectiveFrom || t.effectiveDate).toLocaleDateString()}\n`;
+        msg += `   ${t.isActive ? '🟢 Active' : '⚪ Inactive'}\n\n`;
+      }
+      if (terms.length > 10) msg += `... ${terms.length - 10} more\n`;
+    } else {
+      msg += 'No terms found.';
+    }
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '➕ Add Version', callback_data: 'terms_add' }],
+          [{ text: '🔙 Menu', callback_data: 'admin_menu' }],
+        ],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to load terms.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]] },
+    });
+  }
+});
+
+// ============================================================
+// ADMIN ABOUT
+// ============================================================
+
+bot.callbackQuery('admin_about', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/about');
+    const about = data.data || {};
+    let msg = 'ℹ️ *ABOUT US*\n\n';
+    msg += `📌 Title: ${about.title || 'Ale Kircha'}\n\n`;
+    msg += `📝 ${about.content || 'Ale Kircha - Digital meat sharing platform'}\n\n`;
+    if (about.phone) msg += `📱 Phone: ${about.phone}\n`;
+    if (about.email) msg += `📧 Email: ${about.email}\n`;
+    if (about.address) msg += `📍 Address: ${about.address}\n`;
+    if (about.telegram) msg += `📱 Telegram: ${about.telegram}\n`;
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '✏️ Edit', callback_data: 'about_edit' }],
+          [{ text: '🔙 Menu', callback_data: 'admin_menu' }],
+        ],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to load About.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]] },
+    });
+  }
+});
+
+bot.callbackQuery('about_edit', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    '✏️ *EDIT ABOUT US*\n\nSend the updated details:\n\n' +
+    '📌 Title: Ale Kircha\n' +
+    '📌 Content: Ale Kircha is a digital meat-sharing platform...\n' +
+    '📱 Phone: +251 XXX XXX XXX\n' +
+    '📧 Email: support@alekircha.com\n' +
+    '📍 Address: Addis Ababa, Ethiopia\n' +
+    '📱 Telegram: @AleKirchaAdmin',
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Back', callback_data: 'admin_about' }]],
+      },
+    }
+  );
+});
+
+// ============================================================
+// ADMIN BANKS
+// ============================================================
+
+bot.callbackQuery('admin_banks', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/admin/banks');
+    const banks = data.data || [];
+    let msg = '🏦 *BANK ACCOUNTS*\n\n';
+    if (banks.length) {
+      for (const b of banks) {
+        msg += `📌 *${b.bankNameEn}* (${b.bankNameAm})\n`;
+        msg += `   📱 ${b.accountName}\n`;
+        msg += `   🔢 ${b.accountNumber}\n`;
+        msg += `   ${b.isActive ? '🟢 Active' : '🔴 Inactive'}`;
+        if (b.isDefault) msg += ' ⭐ Default';
+        msg += '\n\n';
+      }
+    } else {
+      msg += 'No bank accounts configured.';
+    }
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '➕ Add Bank', callback_data: 'bank_add' }],
+          [{ text: '✏️ Edit Bank', callback_data: 'bank_edit' }],
+          [{ text: '🗑️ Delete Bank', callback_data: 'bank_delete' }],
+          [{ text: '🔙 Menu', callback_data: 'admin_menu' }],
+        ],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to load bank accounts.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]] },
+    });
+  }
+});
+
+bot.callbackQuery('bank_add', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    '➕ *ADD BANK ACCOUNT*\n\nSend the bank details:\n\n' +
+    '📌 Bank Name (English): Commercial Bank of Ethiopia\n' +
+    '📌 Bank Name (Amharic): የኢትዮጵያ ንግድ ባንክ\n' +
+    '📌 Account Name: Ale Kircha\n' +
+    '📌 Account Number: 1000123456789\n' +
+    '📌 Branch: Head Office (Optional)',
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Back', callback_data: 'admin_banks' }]],
+      },
+    }
+  );
+});
+
+bot.callbackQuery('bank_edit', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    '✏️ *EDIT BANK ACCOUNT*\n\nSend the bank ID and updated details:\n\n' +
+    '📌 Bank ID: [ID from list]\n' +
+    '📌 Bank Name (English): Updated name\n' +
+    '📌 Bank Name (Amharic): የተሻሻለ ስም\n' +
+    '📌 Account Name: Updated account name\n' +
+    '📌 Account Number: Updated account number',
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Back', callback_data: 'admin_banks' }]],
+      },
+    }
+  );
+});
+
+bot.callbackQuery('bank_delete', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    '🗑️ *DELETE BANK ACCOUNT*\n\nSend the bank ID to delete:\n\n' +
+    '📌 Bank ID: [ID from list]\n\n' +
+    '⚠️ Default banks cannot be deleted.',
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Back', callback_data: 'admin_banks' }]],
+      },
+    }
+  );
+});
+
+// ============================================================
+// ADMIN NOTIFICATIONS
+// ============================================================
+
+bot.callbackQuery('admin_notifications', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/admin/notifications/recent');
+    const notifications = data.data || [];
+    let msg = '🔔 *NOTIFICATIONS*\n\n';
+    if (notifications.length) {
+      for (const n of notifications.slice(0, 10)) {
+        const emoji = n.type === 'CUSTOMER_REGISTERED' ? '🆕' :
+                      n.type === 'PAYMENT_SUBMITTED' ? '💳' :
+                      n.type === 'REFUND_REQUESTED' ? '↩️' : '📌';
+        msg += `${emoji} *${n.title}*\n`;
+        msg += `${n.body?.substring(0, 100)}...\n`;
+        msg += `📅 ${new Date(n.createdAt).toLocaleString()}\n\n`;
+      }
+      if (notifications.length > 10) msg += `... ${notifications.length - 10} more\n`;
+    } else {
+      msg += 'No new notifications.';
+    }
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '✅ Mark All Read', callback_data: 'notifications_read_all' }],
+          [{ text: '🔙 Menu', callback_data: 'admin_menu' }],
+        ],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to load notifications.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]] },
+    });
+  }
+});
+
+bot.callbackQuery('notifications_read_all', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    await apiCall('/api/v1/admin/notifications/mark-all-read', { method: 'PUT' });
+    await ctx.reply('✅ All notifications marked as read.', {
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to mark as read.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]] },
+    });
+  }
+});
+
+// ============================================================
+// ADMIN REPORTS
+// ============================================================
+
+bot.callbackQuery('admin_reports', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    '📈 *REPORTS*\n\nSelect a report:',
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '📊 Sales', callback_data: 'report_sales' }, { text: '📦 Orders', callback_data: 'report_orders' }],
+          [{ text: '💳 Payments', callback_data: 'report_payments' }, { text: '🚚 Delivery', callback_data: 'report_delivery' }],
+          [{ text: '👥 Customers', callback_data: 'report_customers' }, { text: '🥩 Groups', callback_data: 'report_groups' }],
+          [{ text: '🔙 Menu', callback_data: 'admin_menu' }],
+        ],
+      },
+    }
+  );
+});
+
+// Report handlers
+async function generateReport(ctx: any, endpoint: string, title: string) {
+  try {
+    const data = await apiCall(endpoint);
+    const d = data.data || {};
+    let msg = `📊 *${title}*\n\n`;
+    if (Object.keys(d).length) {
+      for (const [key, value] of Object.entries(d)) {
+        msg += `📌 ${key}: ${value}\n`;
+      }
+    } else {
+      msg += 'No data available.';
+    }
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Back', callback_data: 'admin_reports' }]],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to load report.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Back', callback_data: 'admin_reports' }]] },
+    });
+  }
+}
+
+bot.callbackQuery('report_sales', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await generateReport(ctx, '/api/v1/admin/reports/sales', 'SALES REPORT');
+});
+
+bot.callbackQuery('report_orders', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await generateReport(ctx, '/api/v1/admin/reports/orders', 'ORDER REPORT');
+});
+
+bot.callbackQuery('report_payments', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await generateReport(ctx, '/api/v1/admin/reports/payments', 'PAYMENT REPORT');
+});
+
+bot.callbackQuery('report_delivery', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await generateReport(ctx, '/api/v1/admin/reports/delivery', 'DELIVERY REPORT');
+});
+
+bot.callbackQuery('report_customers', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await generateReport(ctx, '/api/v1/admin/reports/customers', 'CUSTOMER REPORT');
+});
+
+bot.callbackQuery('report_groups', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await generateReport(ctx, '/api/v1/admin/reports/groups', 'GROUP REPORT');
+});
+
+// ============================================================
+// ADMIN DELIVERY
+// ============================================================
+
+bot.callbackQuery('admin_delivery', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/deliveries');
+    const deliveries = data.data || [];
+    let msg = '🚚 *DELIVERY MANAGEMENT*\n\n';
+    if (deliveries.length) {
+      for (const d of deliveries.slice(0, 10)) {
+        const emoji = d.status === 'PENDING' ? '🟡' : 
+                      d.status === 'OUT_FOR_DELIVERY' ? '🚚' : 
+                      d.status === 'DELIVERED' ? '✅' : '📌';
+        msg += `${emoji} *${d.orderNumber || 'N/A'}*\n`;
+        msg += `   👤 ${d.customername || d.customerName || 'N/A'}\n`;
+        msg += `   📍 ${d.deliveryaddress || d.deliveryAddress || 'N/A'}\n\n`;
+      }
+      if (deliveries.length > 10) msg += `... ${deliveries.length - 10} more\n`;
+    } else {
+      msg += 'No deliveries found.';
+    }
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '📋 Pending', callback_data: 'delivery_pending' }],
+          [{ text: '🚚 Out', callback_data: 'delivery_out' }],
+          [{ text: '✅ Delivered', callback_data: 'delivery_delivered' }],
+          [{ text: '🔙 Menu', callback_data: 'admin_menu' }],
+        ],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to load deliveries.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]] },
+    });
+  }
+});
+
+// ============================================================
+// ADMIN FEES
+// ============================================================
+
+bot.callbackQuery('admin_fees', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/admin/fees');
+    const fees = data.data || [];
+    let msg = '💵 *FEES & CHARGES*\n\n';
+    if (fees.length) {
+      for (const f of fees.slice(0, 10)) {
+        msg += `📌 ${f.name || 'N/A'}\n`;
+        msg += `   ${f.type}: ${f.value}\n`;
+        msg += `   ${f.isActive ? '🟢 Active' : '🔴 Inactive'}\n\n`;
+      }
+      if (fees.length > 10) msg += `... ${fees.length - 10} more\n`;
+    } else {
+      msg += 'No fees configured.';
+    }
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '➕ Add Fee', callback_data: 'fee_add' }],
+          [{ text: '🔙 Menu', callback_data: 'admin_menu' }],
+        ],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to load fees.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]] },
+    });
+  }
+});
+
+// ============================================================
+// ADMIN SETTINGS
+// ============================================================
+
+bot.callbackQuery('admin_settings', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/settings');
+    const settings = data.data || {};
+    let msg = '⚙️ *SETTINGS*\n\n';
+    const items = [
+      ['max_groups_per_user', 'Max Groups per User'],
+      ['max_members_per_group', 'Max Members per Group'],
+      ['group_expiry_days', 'Group Expiry (days)'],
+      ['refund_confirmation_hours', 'Refund Confirmation (hours)'],
+      ['refund_processing_hours', 'Refund Processing (hours)']
+    ];
+    for (const [key, label] of items) {
+      msg += `📌 ${label}: ${settings[key] || 'Not set'}\n`;
+    }
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to load settings.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]] },
+    });
+  }
+});
+
+// ============================================================
+// ADMIN AUDIT
+// ============================================================
+
+bot.callbackQuery('admin_audit', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/audit');
+    const logs = data.data || [];
+    let msg = '📋 *AUDIT LOG*\n\n';
+    if (logs.length) {
+      for (const log of logs.slice(0, 10)) {
+        msg += `📌 ${log.action || 'Unknown'}\n`;
+        msg += `   👤 ${log.username || 'System'}\n`;
+        msg += `   📅 ${new Date(log.createdAt).toLocaleString()}\n\n`;
+      }
+      if (logs.length > 10) msg += `... ${logs.length - 10} more\n`;
+    } else {
+      msg += 'No audit logs found.';
+    }
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to load audit logs.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]] },
+    });
+  }
+});
+
+// ============================================================
+// ADMIN USERS
+// ============================================================
+
+bot.callbackQuery('admin_users', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/admin/users');
+    const users = data.data || [];
+    let msg = '👤 *ADMIN USERS*\n\n';
+    if (users.length) {
+      for (const u of users.slice(0, 10)) {
+        msg += `📌 ${u.username || u.telegramId || 'N/A'}\n`;
+        msg += `   🔹 ${u.role || 'ADMIN'}\n`;
+        msg += `   ${u.isActive ? '🟢 Active' : '🔴 Inactive'}\n\n`;
+      }
+      if (users.length > 10) msg += `... ${users.length - 10} more\n`;
+    } else {
+      msg += 'No admin users found.';
+    }
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '➕ Add Admin', callback_data: 'users_add' }],
+          [{ text: '🔙 Menu', callback_data: 'admin_menu' }],
+        ],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to load admin users.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]] },
+    });
+  }
+});
+
+// ============================================================
+// ADMIN SUPPORT
+// ============================================================
+
+bot.callbackQuery('admin_support', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/support/tickets');
+    const tickets = data.data || [];
+    let msg = '📞 *SUPPORT TICKETS*\n\n';
+    if (tickets.length) {
+      for (const t of tickets.slice(0, 10)) {
+        const emoji = t.status === 'OPEN' ? '🟡' : t.status === 'RESOLVED' ? '✅' : '⚪';
+        msg += `${emoji} *${t.ticketId || t.id}*\n`;
+        msg += `   👤 ${t.customerName || 'N/A'}\n`;
+        msg += `   📌 ${t.category || 'General'}\n\n`;
+      }
+      if (tickets.length > 10) msg += `... ${tickets.length - 10} more\n`;
+    } else {
+      msg += 'No support tickets found.';
+    }
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to load support tickets.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]] },
+    });
+  }
+});
+
+// ============================================================
+// ADMIN DELIVERY
+// ============================================================
+
+bot.callbackQuery('admin_delivery', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/deliveries');
+    const deliveries = data.data || [];
+    let msg = '🚚 *DELIVERY MANAGEMENT*\n\n';
+    
+    if (deliveries.length) {
+      for (const d of deliveries.slice(0, 10)) {
+        const emoji = d.status === 'PENDING' ? '🟡' : 
+                      d.status === 'OUT_FOR_DELIVERY' ? '🚚' : 
+                      d.status === 'DELIVERED' ? '✅' : '📌';
+        msg += `${emoji} *${d.orderNumber || d.id}*\n`;
+        msg += `   👤 ${d.customername || d.customerName || 'N/A'}\n`;
+        msg += `   📍 ${d.deliveryaddress || d.deliveryAddress || 'N/A'}\n`;
+        msg += `   🔹 ${d.status || 'N/A'}\n\n`;
+      }
+      if (deliveries.length > 10) msg += `... ${deliveries.length - 10} more\n`;
+    } else {
+      msg += 'No deliveries found.';
+    }
+    
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '📋 Pending', callback_data: 'delivery_pending' }],
+          [{ text: '🚚 Out for Delivery', callback_data: 'delivery_out' }],
+          [{ text: '✅ Delivered', callback_data: 'delivery_delivered' }],
+          [{ text: '🔙 Menu', callback_data: 'admin_menu' }],
+        ],
+      },
+    });
+  } catch (error) {
+    await ctx.reply('❌ Failed to load deliveries.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]] },
+    });
+  }
+});
+
+// Delivery sub-filters
+bot.callbackQuery('delivery_pending', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/deliveries');
+    const pending = (data.data || []).filter((d: any) => d.status === 'PENDING' || d.status === 'UNASSIGNED');
+    let msg = '📋 *PENDING DELIVERIES*\n\n';
+    if (pending.length) {
+      for (const d of pending.slice(0, 10)) {
+        msg += `📌 ${d.orderNumber || d.id}\n`;
+        msg += `   👤 ${d.customername || d.customerName || 'N/A'}\n\n`;
+      }
+      if (pending.length > 10) msg += `... ${pending.length - 10} more\n`;
+    } else {
+      msg += 'No pending deliveries.';
+    }
+    await ctx.reply(msg, { parse_mode: 'Markdown' });
+  } catch {
+    await ctx.reply('❌ Failed to load pending deliveries.');
+  }
+});
+
+bot.callbackQuery('delivery_out', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/deliveries');
+    const out = (data.data || []).filter((d: any) => d.status === 'OUT_FOR_DELIVERY' || d.status === 'ASSIGNED');
+    let msg = '🚚 *OUT FOR DELIVERY*\n\n';
+    if (out.length) {
+      for (const d of out.slice(0, 10)) {
+        msg += `📌 ${d.orderNumber || d.id}\n`;
+        msg += `   👤 ${d.customername || d.customerName || 'N/A'}\n\n`;
+      }
+      if (out.length > 10) msg += `... ${out.length - 10} more\n`;
+    } else {
+      msg += 'No deliveries out.';
+    }
+    await ctx.reply(msg, { parse_mode: 'Markdown' });
+  } catch {
+    await ctx.reply('❌ Failed to load out for delivery.');
+  }
+});
+
+bot.callbackQuery('delivery_delivered', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/deliveries');
+    const delivered = (data.data || []).filter((d: any) => d.status === 'DELIVERED' || d.status === 'COMPLETED');
+    let msg = '✅ *DELIVERED ORDERS*\n\n';
+    if (delivered.length) {
+      for (const d of delivered.slice(0, 10)) {
+        msg += `📌 ${d.orderNumber || d.id}\n`;
+        msg += `   👤 ${d.customername || d.customerName || 'N/A'}\n`;
+        msg += `   📅 ${new Date(d.updatedAt).toLocaleDateString()}\n\n`;
+      }
+      if (delivered.length > 10) msg += `... ${delivered.length - 10} more\n`;
+    } else {
+      msg += 'No delivered orders.';
+    }
+    await ctx.reply(msg, { parse_mode: 'Markdown' });
+  } catch {
+    await ctx.reply('❌ Failed to load delivered orders.');
+  }
+});
+
+// ============================================================
+// ADMIN DELIVERY
+// ============================================================
+
+bot.callbackQuery('admin_delivery', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/deliveries');
+    const deliveries = data.data || [];
+    let msg = '🚚 *DELIVERY MANAGEMENT*\n\n';
+    
+    if (deliveries.length) {
+      for (const d of deliveries.slice(0, 10)) {
+        const emoji = d.status === 'PENDING' ? '🟡' : 
+                      d.status === 'OUT_FOR_DELIVERY' ? '🚚' : 
+                      d.status === 'DELIVERED' ? '✅' : '📌';
+        msg += `${emoji} *${d.orderNumber || d.id}*\n`;
+        msg += `   👤 ${d.customername || d.customerName || 'N/A'}\n`;
+        msg += `   📍 ${d.deliveryaddress || d.deliveryAddress || 'N/A'}\n`;
+        msg += `   🔹 ${d.status || 'N/A'}\n\n`;
+      }
+      if (deliveries.length > 10) msg += `... ${deliveries.length - 10} more\n`;
+    } else {
+      msg += 'No deliveries found.';
+    }
+    
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '📋 Pending', callback_data: 'delivery_pending' }],
+          [{ text: '🚚 Out for Delivery', callback_data: 'delivery_out' }],
+          [{ text: '✅ Delivered', callback_data: 'delivery_delivered' }],
+          [{ text: '🔙 Menu', callback_data: 'admin_menu' }],
+        ],
+      },
+    });
+  } catch (error) {
+    await ctx.reply('❌ Failed to load deliveries.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]] },
+    });
+  }
+});
+
+// Delivery sub-filters
+bot.callbackQuery('delivery_pending', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/deliveries');
+    const pending = (data.data || []).filter((d: any) => d.status === 'PENDING' || d.status === 'UNASSIGNED');
+    let msg = '📋 *PENDING DELIVERIES*\n\n';
+    if (pending.length) {
+      for (const d of pending.slice(0, 10)) {
+        msg += `📌 ${d.orderNumber || d.id}\n`;
+        msg += `   👤 ${d.customername || d.customerName || 'N/A'}\n\n`;
+      }
+      if (pending.length > 10) msg += `... ${pending.length - 10} more\n`;
+    } else {
+      msg += 'No pending deliveries.';
+    }
+    await ctx.reply(msg, { parse_mode: 'Markdown' });
+  } catch {
+    await ctx.reply('❌ Failed to load pending deliveries.');
+  }
+});
+
+bot.callbackQuery('delivery_out', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/deliveries');
+    const out = (data.data || []).filter((d: any) => d.status === 'OUT_FOR_DELIVERY' || d.status === 'ASSIGNED');
+    let msg = '🚚 *OUT FOR DELIVERY*\n\n';
+    if (out.length) {
+      for (const d of out.slice(0, 10)) {
+        msg += `📌 ${d.orderNumber || d.id}\n`;
+        msg += `   👤 ${d.customername || d.customerName || 'N/A'}\n\n`;
+      }
+      if (out.length > 10) msg += `... ${out.length - 10} more\n`;
+    } else {
+      msg += 'No deliveries out.';
+    }
+    await ctx.reply(msg, { parse_mode: 'Markdown' });
+  } catch {
+    await ctx.reply('❌ Failed to load out for delivery.');
+  }
+});
+
+bot.callbackQuery('delivery_delivered', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/deliveries');
+    const delivered = (data.data || []).filter((d: any) => d.status === 'DELIVERED' || d.status === 'COMPLETED');
+    let msg = '✅ *DELIVERED ORDERS*\n\n';
+    if (delivered.length) {
+      for (const d of delivered.slice(0, 10)) {
+        msg += `📌 ${d.orderNumber || d.id}\n`;
+        msg += `   👤 ${d.customername || d.customerName || 'N/A'}\n`;
+        msg += `   📅 ${new Date(d.updatedAt).toLocaleDateString()}\n\n`;
+      }
+      if (delivered.length > 10) msg += `... ${delivered.length - 10} more\n`;
+    } else {
+      msg += 'No delivered orders.';
+    }
+    await ctx.reply(msg, { parse_mode: 'Markdown' });
+  } catch {
+    await ctx.reply('❌ Failed to load delivered orders.');
+  }
+});
+
+// ============================================================
+// ADMIN REPORTS
+// ============================================================
+
+bot.callbackQuery('admin_reports', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    '📈 *REPORTS*\n\nSelect a report:',
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '📊 Sales', callback_data: 'report_sales' }, { text: '📦 Orders', callback_data: 'report_orders' }],
+          [{ text: '💳 Payments', callback_data: 'report_payments' }, { text: '🚚 Delivery', callback_data: 'report_delivery' }],
+          [{ text: '👥 Customers', callback_data: 'report_customers' }, { text: '🥩 Groups', callback_data: 'report_groups' }],
+          [{ text: '🔙 Menu', callback_data: 'admin_menu' }],
+        ],
+      },
+    }
+  );
+});
+
+async function generateReport(ctx: any, endpoint: string, title: string) {
+  try {
+    const data = await apiCall(endpoint);
+    const d = data.data || {};
+    let msg = `📊 *${title}*\n\n`;
+    if (Object.keys(d).length) {
+      for (const [key, value] of Object.entries(d)) {
+        msg += `📌 ${key}: ${value}\n`;
+      }
+    } else {
+      msg += 'No data available.';
+    }
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Back', callback_data: 'admin_reports' }]],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to load report.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Back', callback_data: 'admin_reports' }]] },
+    });
+  }
+}
+
+bot.callbackQuery('report_sales', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await generateReport(ctx, '/api/v1/admin/reports/sales', 'SALES REPORT');
+});
+
+bot.callbackQuery('report_orders', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await generateReport(ctx, '/api/v1/admin/reports/orders', 'ORDER REPORT');
+});
+
+bot.callbackQuery('report_payments', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await generateReport(ctx, '/api/v1/admin/reports/payments', 'PAYMENT REPORT');
+});
+
+bot.callbackQuery('report_delivery', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await generateReport(ctx, '/api/v1/admin/reports/delivery', 'DELIVERY REPORT');
+});
+
+bot.callbackQuery('report_customers', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await generateReport(ctx, '/api/v1/admin/reports/customers', 'CUSTOMER REPORT');
+});
+
+bot.callbackQuery('report_groups', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await generateReport(ctx, '/api/v1/admin/reports/groups', 'GROUP REPORT');
+});
+
+// ============================================================
+// ADMIN FEES
+// ============================================================
+
+bot.callbackQuery('admin_fees', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/admin/fees');
+    const fees = data.data || [];
+    let msg = '💵 *FEES & CHARGES*\n\n';
+    if (fees.length) {
+      for (const f of fees.slice(0, 10)) {
+        msg += `📌 ${f.name || 'N/A'}\n`;
+        msg += `   ${f.type || 'fixed'}: ${f.value || 0}\n`;
+        msg += `   📂 ${f.category || 'general'}\n`;
+        msg += `   ${f.isActive ? '🟢 Active' : '🔴 Inactive'}\n\n`;
+      }
+      if (fees.length > 10) msg += `... ${fees.length - 10} more\n`;
+    } else {
+      msg += 'No fees configured.';
+    }
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '➕ Add Fee', callback_data: 'fee_add' }],
+          [{ text: '🔙 Menu', callback_data: 'admin_menu' }],
+        ],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to load fees.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]] },
+    });
+  }
+});
+
+bot.callbackQuery('fee_add', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    '➕ *ADD FEE*\n\nSend the fee details:\n\n' +
+    '📌 Name: Service Fee\n' +
+    '📌 Name (Amharic): የአገልግሎት ክፍያ\n' +
+    '📌 Type: fixed (or percentage)\n' +
+    '📌 Value: 100\n' +
+    '📌 Category: service\n\n' +
+    'Categories: service, delivery, tax, discount, payment_method',
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Back', callback_data: 'admin_fees' }]],
+      },
+    }
+  );
+});
+
+// ============================================================
+// ADMIN SETTINGS
+// ============================================================
+
+bot.callbackQuery('admin_settings', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/settings');
+    const settings = data.data || {};
+    let msg = '⚙️ *SETTINGS*\n\n';
+    const items = [
+      ['max_groups_per_user', 'Max Groups per User'],
+      ['max_members_per_group', 'Max Members per Group'],
+      ['group_expiry_days', 'Group Expiry (days)'],
+      ['refund_confirmation_hours', 'Refund Confirmation (hours)'],
+      ['refund_processing_hours', 'Refund Processing (hours)']
+    ];
+    let hasSettings = false;
+    for (const [key, label] of items) {
+      if (settings[key]) {
+        msg += `📌 ${label}: ${settings[key]}\n`;
+        hasSettings = true;
+      }
+    }
+    if (!hasSettings) {
+      msg += 'No settings configured.';
+    }
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '✏️ Edit Settings', callback_data: 'settings_edit' }],
+          [{ text: '🔙 Menu', callback_data: 'admin_menu' }],
+        ],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to load settings.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]] },
+    });
+  }
+});
+
+bot.callbackQuery('settings_edit', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    '✏️ *EDIT SETTINGS*\n\nSend the updated settings:\n\n' +
+    '📌 max_groups_per_user: 5\n' +
+    '📌 max_members_per_group: 50\n' +
+    '📌 group_expiry_days: 30\n' +
+    '📌 refund_confirmation_hours: 1\n' +
+    '📌 refund_processing_hours: 2',
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Back', callback_data: 'admin_settings' }]],
+      },
+    }
+  );
+});
+
+// ============================================================
+// ADMIN USERS
+// ============================================================
+
+bot.callbackQuery('admin_users', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/admin/users');
+    const users = data.data || [];
+    let msg = '👤 *ADMIN USERS*\n\n';
+    if (users.length) {
+      for (const u of users.slice(0, 10)) {
+        msg += `📌 ${u.username || u.telegramId || 'N/A'}\n`;
+        msg += `   🔹 ${u.role || 'ADMIN'}\n`;
+        msg += `   ${u.isActive ? '🟢 Active' : '🔴 Inactive'}\n\n`;
+      }
+      if (users.length > 10) msg += `... ${users.length - 10} more\n`;
+    } else {
+      msg += 'No admin users found.';
+    }
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '➕ Add Admin', callback_data: 'users_add' }],
+          [{ text: '🔙 Menu', callback_data: 'admin_menu' }],
+        ],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to load admin users.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]] },
+    });
+  }
+});
+
+bot.callbackQuery('users_add', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    '➕ *ADD ADMIN USER*\n\nSend the admin details:\n\n' +
+    '📌 Telegram ID: 123456789\n' +
+    '📌 Role: ADMIN\n\n' +
+    'Available roles:\n' +
+    '• ADMIN\n' +
+    '• SUPER_ADMIN\n' +
+    '• PAYMENT_VERIFIER\n' +
+    '• ORDER_MANAGER',
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Back', callback_data: 'admin_users' }]],
+      },
+    }
+  );
+});
+
+// ============================================================
+// ADMIN AUDIT
+// ============================================================
+
+bot.callbackQuery('admin_audit', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/audit');
+    const logs = data.data || [];
+    let msg = '📋 *AUDIT LOG*\n\n';
+    if (logs.length) {
+      for (const log of logs.slice(0, 10)) {
+        msg += `📌 ${log.action || 'Unknown'}\n`;
+        msg += `   👤 ${log.username || 'System'}\n`;
+        msg += `   📅 ${new Date(log.createdAt).toLocaleString()}\n\n`;
+      }
+      if (logs.length > 10) msg += `... ${logs.length - 10} more\n`;
+    } else {
+      msg += 'No audit logs found.';
+    }
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to load audit logs.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]] },
+    });
+  }
+});
+
+// ============================================================
+// ADMIN SUPPORT
+// ============================================================
+
+bot.callbackQuery('admin_support', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/support/tickets');
+    const tickets = data.data || [];
+    let msg = '📞 *SUPPORT TICKETS*\n\n';
+    if (tickets.length) {
+      for (const t of tickets.slice(0, 10)) {
+        const emoji = t.status === 'OPEN' ? '🟡' : t.status === 'RESOLVED' ? '✅' : '⚪';
+        msg += `${emoji} *${t.ticketId || t.id}*\n`;
+        msg += `   👤 ${t.customerName || 'N/A'}\n`;
+        msg += `   📌 ${t.category || 'General'}\n\n`;
+      }
+      if (tickets.length > 10) msg += `... ${tickets.length - 10} more\n`;
+    } else {
+      msg += 'No support tickets found.';
+    }
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to load support tickets.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]] },
+    });
+  }
+});
+
+// ============================================================
+// ADMIN NOTIFICATIONS
+// ============================================================
+
+bot.callbackQuery('admin_notifications', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/admin/notifications/recent');
+    const notifications = data.data || [];
+    let msg = '🔔 *NOTIFICATIONS*\n\n';
+    if (notifications.length) {
+      for (const n of notifications.slice(0, 10)) {
+        const emoji = n.type === 'CUSTOMER_REGISTERED' ? '🆕' :
+                      n.type === 'PAYMENT_SUBMITTED' ? '💳' :
+                      n.type === 'REFUND_REQUESTED' ? '↩️' : '📌';
+        msg += `${emoji} *${n.title}*\n`;
+        msg += `${n.body?.substring(0, 100)}...\n`;
+        msg += `📅 ${new Date(n.createdAt).toLocaleString()}\n\n`;
+      }
+      if (notifications.length > 10) msg += `... ${notifications.length - 10} more\n`;
+    } else {
+      msg += 'No new notifications.';
+    }
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '✅ Mark All Read', callback_data: 'notifications_read_all' }],
+          [{ text: '🔙 Menu', callback_data: 'admin_menu' }],
+        ],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to load notifications.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]] },
+    });
+  }
+});
+
+bot.callbackQuery('notifications_read_all', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    await apiCall('/api/v1/admin/notifications/mark-all-read', { method: 'PUT' });
+    await ctx.reply('✅ All notifications marked as read.', {
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to mark as read.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]] },
+    });
+  }
+});
+
+// ============================================================
+// ADMIN BANKS
+// ============================================================
+
+bot.callbackQuery('admin_banks', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/admin/banks');
+    const banks = data.data || [];
+    let msg = '🏦 *BANK ACCOUNTS*\n\n';
+    if (banks.length) {
+      for (const b of banks) {
+        msg += `📌 *${b.bankNameEn}* (${b.bankNameAm})\n`;
+        msg += `   📱 ${b.accountName}\n`;
+        msg += `   🔢 ${b.accountNumber}\n`;
+        msg += `   ${b.isActive ? '🟢 Active' : '🔴 Inactive'}`;
+        if (b.isDefault) msg += ' ⭐ Default';
+        msg += '\n\n';
+      }
+    } else {
+      msg += 'No bank accounts configured.';
+    }
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '➕ Add Bank', callback_data: 'bank_add' }],
+          [{ text: '✏️ Edit Bank', callback_data: 'bank_edit' }],
+          [{ text: '🗑️ Delete Bank', callback_data: 'bank_delete' }],
+          [{ text: '🔙 Menu', callback_data: 'admin_menu' }],
+        ],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to load bank accounts.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]] },
+    });
+  }
+});
+
+bot.callbackQuery('bank_add', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    '➕ *ADD BANK ACCOUNT*\n\nSend the bank details:\n\n' +
+    '📌 Bank Name (English): Commercial Bank of Ethiopia\n' +
+    '📌 Bank Name (Amharic): የኢትዮጵያ ንግድ ባንክ\n' +
+    '📌 Account Name: Ale Kircha\n' +
+    '📌 Account Number: 1000123456789\n' +
+    '📌 Branch: Head Office (Optional)',
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Back', callback_data: 'admin_banks' }]],
+      },
+    }
+  );
+});
+
+bot.callbackQuery('bank_edit', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    '✏️ *EDIT BANK ACCOUNT*\n\nSend the bank ID and updated details:\n\n' +
+    '📌 Bank ID: [ID from list]\n' +
+    '📌 Bank Name (English): Updated name\n' +
+    '📌 Bank Name (Amharic): የተሻሻለ ስም\n' +
+    '📌 Account Name: Updated account name\n' +
+    '📌 Account Number: Updated account number',
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Back', callback_data: 'admin_banks' }]],
+      },
+    }
+  );
+});
+
+bot.callbackQuery('bank_delete', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    '🗑️ *DELETE BANK ACCOUNT*\n\nSend the bank ID to delete:\n\n' +
+    '📌 Bank ID: [ID from list]\n\n' +
+    '⚠️ Default banks cannot be deleted.',
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Back', callback_data: 'admin_banks' }]],
+      },
+    }
+  );
+});
+
+// ============================================================
+// ADMIN BANKS - Already exists, but ensure it's there
+// ============================================================
+
+bot.callbackQuery('admin_banks', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/admin/banks');
+    const banks = data.data || [];
+    let msg = '🏦 *BANK ACCOUNTS*\n\n';
+    if (banks.length) {
+      for (const b of banks) {
+        msg += `📌 *${b.bankNameEn}* (${b.bankNameAm})\n`;
+        msg += `   📱 ${b.accountName}\n`;
+        msg += `   🔢 ${b.accountNumber}\n`;
+        msg += `   ${b.isActive ? '🟢 Active' : '🔴 Inactive'}`;
+        if (b.isDefault) msg += ' ⭐ Default';
+        msg += '\n\n';
+      }
+    } else {
+      msg += 'No bank accounts configured.';
+    }
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '➕ Add Bank', callback_data: 'bank_add' }],
+          [{ text: '✏️ Edit Bank', callback_data: 'bank_edit' }],
+          [{ text: '🗑️ Delete Bank', callback_data: 'bank_delete' }],
+          [{ text: '🔙 Menu', callback_data: 'admin_menu' }],
+        ],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to load bank accounts.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]] },
+    });
+  }
+});
+
+// ============================================================
+// UPDATE MAIN MENU - Add all options
+// ============================================================
+
+// Note: This replaces the existing showMainMenu function
+// Check if showMainMenu exists and update it
+
+// We'll append to the existing function instead of replacing
+// Add the missing menu items to the main menu
+
+// ============================================================
+// ADMIN DELIVERY
+// ============================================================
+
+bot.callbackQuery('admin_delivery', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/deliveries');
+    const deliveries = data.data || [];
+    let msg = '🚚 *DELIVERY MANAGEMENT*\n\n';
+    if (deliveries.length) {
+      for (const d of deliveries.slice(0, 10)) {
+        const emoji = d.status === 'PENDING' ? '🟡' : 
+                      d.status === 'OUT_FOR_DELIVERY' ? '🚚' : 
+                      d.status === 'DELIVERED' ? '✅' : '📌';
+        msg += `${emoji} *${d.orderNumber || d.id}*\n`;
+        msg += `   👤 ${d.customername || d.customerName || 'N/A'}\n`;
+        msg += `   📍 ${d.deliveryaddress || d.deliveryAddress || 'N/A'}\n\n`;
+      }
+      if (deliveries.length > 10) msg += `... ${deliveries.length - 10} more\n`;
+    } else {
+      msg += 'No deliveries found.';
+    }
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '📋 Pending', callback_data: 'delivery_pending' }],
+          [{ text: '🚚 Out', callback_data: 'delivery_out' }],
+          [{ text: '✅ Delivered', callback_data: 'delivery_delivered' }],
+          [{ text: '🔙 Menu', callback_data: 'admin_menu' }],
+        ],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to load deliveries.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]] },
+    });
+  }
+});
+
+// ============================================================
+// ADMIN REPORTS
+// ============================================================
+
+bot.callbackQuery('admin_reports', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    '📈 *REPORTS*\n\nSelect a report:',
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '📊 Sales', callback_data: 'report_sales' }, { text: '📦 Orders', callback_data: 'report_orders' }],
+          [{ text: '💳 Payments', callback_data: 'report_payments' }, { text: '🚚 Delivery', callback_data: 'report_delivery' }],
+          [{ text: '👥 Customers', callback_data: 'report_customers' }, { text: '🥩 Groups', callback_data: 'report_groups' }],
+          [{ text: '🔙 Menu', callback_data: 'admin_menu' }],
+        ],
+      },
+    }
+  );
+});
+
+// Report handlers
+async function generateReport(ctx: any, endpoint: string, title: string) {
+  try {
+    const data = await apiCall(endpoint);
+    const d = data.data || {};
+    let msg = `📊 *${title}*\n\n`;
+    if (Object.keys(d).length) {
+      for (const [key, value] of Object.entries(d)) {
+        msg += `📌 ${key}: ${value}\n`;
+      }
+    } else {
+      msg += 'No data available.';
+    }
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Back', callback_data: 'admin_reports' }]],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to load report.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Back', callback_data: 'admin_reports' }]] },
+    });
+  }
+}
+
+bot.callbackQuery('report_sales', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await generateReport(ctx, '/api/v1/admin/reports/sales', 'SALES REPORT');
+});
+
+bot.callbackQuery('report_orders', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await generateReport(ctx, '/api/v1/admin/reports/orders', 'ORDER REPORT');
+});
+
+bot.callbackQuery('report_payments', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await generateReport(ctx, '/api/v1/admin/reports/payments', 'PAYMENT REPORT');
+});
+
+bot.callbackQuery('report_delivery', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await generateReport(ctx, '/api/v1/admin/reports/delivery', 'DELIVERY REPORT');
+});
+
+bot.callbackQuery('report_customers', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await generateReport(ctx, '/api/v1/admin/reports/customers', 'CUSTOMER REPORT');
+});
+
+bot.callbackQuery('report_groups', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await generateReport(ctx, '/api/v1/admin/reports/groups', 'GROUP REPORT');
+});
+
+// ============================================================
+// ADMIN FEES
+// ============================================================
+
+bot.callbackQuery('admin_fees', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/admin/fees');
+    const fees = data.data || [];
+    let msg = '💵 *FEES & CHARGES*\n\n';
+    if (fees.length) {
+      for (const f of fees.slice(0, 10)) {
+        msg += `📌 ${f.name || 'N/A'}\n`;
+        msg += `   ${f.type || 'fixed'}: ${f.value || 0}\n`;
+        msg += `   📂 ${f.category || 'general'}\n`;
+        msg += `   ${f.isActive ? '🟢 Active' : '🔴 Inactive'}\n\n`;
+      }
+      if (fees.length > 10) msg += `... ${fees.length - 10} more\n`;
+    } else {
+      msg += 'No fees configured.';
+    }
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '➕ Add Fee', callback_data: 'fee_add' }],
+          [{ text: '🔙 Menu', callback_data: 'admin_menu' }],
+        ],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to load fees.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]] },
+    });
+  }
+});
+
+bot.callbackQuery('fee_add', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    '➕ *ADD FEE*\n\nSend the fee details:\n\n' +
+    '📌 Name: Service Fee\n' +
+    '📌 Name (Amharic): የአገልግሎት ክፍያ\n' +
+    '📌 Type: fixed (or percentage)\n' +
+    '📌 Value: 100\n' +
+    '📌 Category: service\n\n' +
+    'Categories: service, delivery, tax, discount, payment_method',
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Back', callback_data: 'admin_fees' }]],
+      },
+    }
+  );
+});
+
+// ============================================================
+// ADMIN SETTINGS
+// ============================================================
+
+bot.callbackQuery('admin_settings', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/settings');
+    const settings = data.data || {};
+    let msg = '⚙️ *SETTINGS*\n\n';
+    const items = [
+      ['max_groups_per_user', 'Max Groups per User'],
+      ['max_members_per_group', 'Max Members per Group'],
+      ['group_expiry_days', 'Group Expiry (days)'],
+      ['refund_confirmation_hours', 'Refund Confirmation (hours)'],
+      ['refund_processing_hours', 'Refund Processing (hours)']
+    ];
+    let hasSettings = false;
+    for (const [key, label] of items) {
+      if (settings[key]) {
+        msg += `📌 ${label}: ${settings[key]}\n`;
+        hasSettings = true;
+      }
+    }
+    if (!hasSettings) msg += 'No settings configured.';
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '✏️ Edit', callback_data: 'settings_edit' }],
+          [{ text: '🔙 Menu', callback_data: 'admin_menu' }],
+        ],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to load settings.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]] },
+    });
+  }
+});
+
+bot.callbackQuery('settings_edit', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    '✏️ *EDIT SETTINGS*\n\nSend the updated settings:\n\n' +
+    '📌 max_groups_per_user: 5\n' +
+    '📌 max_members_per_group: 50\n' +
+    '📌 group_expiry_days: 30\n' +
+    '📌 refund_confirmation_hours: 1\n' +
+    '📌 refund_processing_hours: 2',
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Back', callback_data: 'admin_settings' }]],
+      },
+    }
+  );
+});
+
+// ============================================================
+// ADMIN USERS
+// ============================================================
+
+bot.callbackQuery('admin_users', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/admin/users');
+    const users = data.data || [];
+    let msg = '👤 *ADMIN USERS*\n\n';
+    if (users.length) {
+      for (const u of users.slice(0, 10)) {
+        msg += `📌 ${u.username || u.telegramId || 'N/A'}\n`;
+        msg += `   🔹 ${u.role || 'ADMIN'}\n`;
+        msg += `   ${u.isActive ? '🟢 Active' : '🔴 Inactive'}\n\n`;
+      }
+      if (users.length > 10) msg += `... ${users.length - 10} more\n`;
+    } else {
+      msg += 'No admin users found.';
+    }
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '➕ Add Admin', callback_data: 'users_add' }],
+          [{ text: '🔙 Menu', callback_data: 'admin_menu' }],
+        ],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to load admin users.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]] },
+    });
+  }
+});
+
+bot.callbackQuery('users_add', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    '➕ *ADD ADMIN USER*\n\nSend the admin details:\n\n' +
+    '📌 Telegram ID: 123456789\n' +
+    '📌 Role: ADMIN\n\n' +
+    'Available roles:\n' +
+    '• ADMIN\n' +
+    '• SUPER_ADMIN\n' +
+    '• PAYMENT_VERIFIER\n' +
+    '• ORDER_MANAGER',
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Back', callback_data: 'admin_users' }]],
+      },
+    }
+  );
+});
+
+// ============================================================
+// ADMIN AUDIT
+// ============================================================
+
+bot.callbackQuery('admin_audit', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/audit');
+    const logs = data.data || [];
+    let msg = '📋 *AUDIT LOG*\n\n';
+    if (logs.length) {
+      for (const log of logs.slice(0, 10)) {
+        msg += `📌 ${log.action || 'Unknown'}\n`;
+        msg += `   👤 ${log.username || 'System'}\n`;
+        msg += `   📅 ${new Date(log.createdAt).toLocaleString()}\n\n`;
+      }
+      if (logs.length > 10) msg += `... ${logs.length - 10} more\n`;
+    } else {
+      msg += 'No audit logs found.';
+    }
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to load audit logs.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]] },
+    });
+  }
+});
+
+// ============================================================
+// ADMIN SUPPORT
+// ============================================================
+
+bot.callbackQuery('admin_support', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/support/tickets');
+    const tickets = data.data || [];
+    let msg = '📞 *SUPPORT TICKETS*\n\n';
+    if (tickets.length) {
+      for (const t of tickets.slice(0, 10)) {
+        const emoji = t.status === 'OPEN' ? '🟡' : t.status === 'RESOLVED' ? '✅' : '⚪';
+        msg += `${emoji} *${t.ticketId || t.id}*\n`;
+        msg += `   👤 ${t.customerName || 'N/A'}\n`;
+        msg += `   📌 ${t.category || 'General'}\n\n`;
+      }
+      if (tickets.length > 10) msg += `... ${tickets.length - 10} more\n`;
+    } else {
+      msg += 'No support tickets found.';
+    }
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to load support tickets.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]] },
+    });
+  }
+});
+
+// ============================================================
+// ADMIN FAQ
+// ============================================================
+
+bot.callbackQuery('admin_faq', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/faq');
+    const faqs = data.data || [];
+    let msg = '❓ *FAQ MANAGEMENT*\n\n';
+    if (faqs.length) {
+      for (const f of faqs.slice(0, 10)) {
+        msg += `📌 ${f.questionEn || 'N/A'}\n`;
+        msg += `   ${f.isActive ? '🟢 Active' : '🔴 Inactive'}\n\n`;
+      }
+      if (faqs.length > 10) msg += `... ${faqs.length - 10} more\n`;
+    } else {
+      msg += 'No FAQs found.';
+    }
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '➕ Add FAQ', callback_data: 'faq_add' }],
+          [{ text: '🔙 Menu', callback_data: 'admin_menu' }],
+        ],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to load FAQs.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]] },
+    });
+  }
+});
+
+bot.callbackQuery('faq_add', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    '➕ *ADD FAQ*\n\nSend the FAQ details:\n\n' +
+    '📌 Question (English): How do I join a group?\n' +
+    '📌 Question (Amharic): ቅርጫ ቡድን እንዴት እቀላቀላለሁ?\n' +
+    '📌 Answer (English): Open available groups and click Join.\n' +
+    '📌 Answer (Amharic): የሚገኙ ቡድኖችን ይክፈቱ እና ተቀላቀል ይጫኑ።',
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Back', callback_data: 'admin_faq' }]],
+      },
+    }
+  );
+});
+
+// ============================================================
+// ADMIN TERMS
+// ============================================================
+
+bot.callbackQuery('admin_terms', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/terms');
+    const terms = data.data || [];
+    let msg = '📜 *TERMS MANAGEMENT*\n\n';
+    if (terms.length) {
+      for (const t of terms.slice(0, 10)) {
+        msg += `📌 v${t.version || '1.0'}\n`;
+        msg += `   📅 ${new Date(t.effectiveFrom || t.effectiveDate).toLocaleDateString()}\n`;
+        msg += `   ${t.isActive ? '🟢 Active' : '⚪ Inactive'}\n\n`;
+      }
+      if (terms.length > 10) msg += `... ${terms.length - 10} more\n`;
+    } else {
+      msg += 'No terms found.';
+    }
+    await ctx.reply(msg, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '➕ Add Version', callback_data: 'terms_add' }],
+          [{ text: '🔙 Menu', callback_data: 'admin_menu' }],
+        ],
+      },
+    });
+  } catch {
+    await ctx.reply('❌ Failed to load terms.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Menu', callback_data: 'admin_menu' }]] },
+    });
+  }
+});

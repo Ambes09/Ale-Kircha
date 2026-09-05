@@ -1,74 +1,95 @@
-import { FastifyRequest, FastifyReply } from 'fastify';
-import prisma from '../lib/prisma.js';
-import { NotFoundError } from '../errors/index.js';
+import { PrismaClient } from '@prisma/client';
 
-export class AddressController {
-  async getAddresses(request: FastifyRequest, reply: FastifyReply) {
-    const user = (request as any).user;
-    const customer = await prisma.customer.findUnique({
-      where: { userId: user.customerId }
-    });
-    if (!customer) throw new NotFoundError('Customer');
-    
-    const addresses = await prisma.customerAddress.findMany({
-      where: { customerId: customer.id },
-      orderBy: { isDefault: 'desc' }
-    });
-    return reply.send({ success: true, data: addresses });
-  }
+const prisma = new PrismaClient();
 
-  async createAddress(request: FastifyRequest, reply: FastifyReply) {
-    const user = (request as any).user;
-    const body = request.body as any;
-    
+// Note: In the Prisma schema, the model is "Customer" with an address field
+// Not a separate "CustomerAddress" model
+export const addressController = {
+  // Get all addresses for a customer
+  async getAddresses(customerId: string) {
     const customer = await prisma.customer.findUnique({
-      where: { userId: user.customerId }
-    });
-    if (!customer) throw new NotFoundError('Customer');
-    
-    const address = await prisma.customerAddress.create({
-      data: {
-        ...body,
-        customerId: customer.id
+      where: { id: customerId },
+      select: {
+        id: true,
+        deliveryAddress: true,
+        city: true,
+        subCity: true,
+        woreda: true,
+        houseNumber: true,
+        landmark: true,
+        latitude: true,
+        longitude: true,
       }
     });
-    return reply.status(201).send({ success: true, data: address });
-  }
+    return customer ? [customer] : [];
+  },
 
-  async updateAddress(request: FastifyRequest, reply: FastifyReply) {
-    const { id } = request.params as { id: string };
-    const body = request.body as any;
-    const address = await prisma.customerAddress.update({
+  // Get single address (returns customer info)
+  async getAddress(id: string) {
+    return prisma.customer.findUnique({
       where: { id },
-      data: body
+      select: {
+        id: true,
+        deliveryAddress: true,
+        city: true,
+        subCity: true,
+        woreda: true,
+        houseNumber: true,
+        landmark: true,
+        latitude: true,
+        longitude: true,
+      }
     });
-    return reply.send({ success: true, data: address });
-  }
+  },
 
-  async deleteAddress(request: FastifyRequest, reply: FastifyReply) {
-    const { id } = request.params as { id: string };
-    await prisma.customerAddress.delete({ where: { id } });
-    return reply.send({ success: true });
-  }
+  // Create address (update customer)
+  async createAddress(data: any) {
+    return prisma.customer.update({
+      where: { id: data.customerId },
+      data: {
+        deliveryAddress: data.address || data.deliveryAddress,
+        city: data.city,
+        subCity: data.subCity,
+        woreda: data.woreda,
+        houseNumber: data.houseNumber,
+        landmark: data.landmark,
+        latitude: data.latitude,
+        longitude: data.longitude,
+      }
+    });
+  },
 
-  async setDefaultAddress(request: FastifyRequest, reply: FastifyReply) {
-    const { id } = request.params as { id: string };
-    const user = (request as any).user;
-    
-    const customer = await prisma.customer.findUnique({
-      where: { userId: user.customerId }
-    });
-    if (!customer) throw new NotFoundError('Customer');
-    
-    await prisma.customerAddress.updateMany({
-      where: { customerId: customer.id, isDefault: true },
-      data: { isDefault: false }
-    });
-    
-    const address = await prisma.customerAddress.update({
+  // Update address
+  async updateAddress(id: string, data: any) {
+    return prisma.customer.update({
       where: { id },
-      data: { isDefault: true }
+      data: {
+        deliveryAddress: data.address || data.deliveryAddress,
+        city: data.city,
+        subCity: data.subCity,
+        woreda: data.woreda,
+        houseNumber: data.houseNumber,
+        landmark: data.landmark,
+        latitude: data.latitude,
+        longitude: data.longitude,
+      }
     });
-    return reply.send({ success: true, data: address });
-  }
-}
+  },
+
+  // Delete address (set to null)
+  async deleteAddress(id: string) {
+    return prisma.customer.update({
+      where: { id },
+      data: {
+        deliveryAddress: null,
+        city: null,
+        subCity: null,
+        woreda: null,
+        houseNumber: null,
+        landmark: null,
+        latitude: null,
+        longitude: null,
+      }
+    });
+  },
+};

@@ -4,7 +4,7 @@ import prisma from '../lib/prisma.js';
 export class FAQController {
   async getAllFAQs(request: FastifyRequest, reply: FastifyReply) {
     const faqs = await prisma.fAQ.findMany({
-      where: { active: true },
+      where: { isActive: true },
       orderBy: { order: 'asc' }
     });
     return reply.send({ success: true, data: faqs });
@@ -28,7 +28,7 @@ export class FAQController {
         questionAm: body.questionAm,
         answerEn: body.answerEn,
         answerAm: body.answerAm,
-        active: body.active !== undefined ? body.active : true
+        isActive: body.active !== undefined ? body.active : true
       }
     });
     return reply.status(201).send({ success: true, data: faq });

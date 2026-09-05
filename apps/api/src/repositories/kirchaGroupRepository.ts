@@ -7,7 +7,7 @@ export class KirchaGroupRepository {
     return this.prisma.kirchaGroup.findMany({
       where: {
         status: 'OPEN',
-        totalCapacity: {
+        maxQuota: {
           gt: 0
         }
       },

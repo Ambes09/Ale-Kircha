@@ -1,0 +1,1265 @@
+import Fastify from 'fastify';
+import cors from '@fastify/cors';
+import helmet from '@fastify/helmet';
+import { Client } from 'pg';
+
+const fastify = Fastify({ logger: true });
+
+// Database client
+const db = new Client({
+  connectionString: process.env.DATABASE_URL || 'postgresql://localhost:5432/ale_kircha',
+});
+
+// Connect to database
+db.connect().then(() => {
+  console.log('✅ PostgreSQL connected');
+}).catch(err => {
+  console.error('❌ Database connection failed:', err.message);
+  process.exit(1);
+});
+
+// Register plugins BEFORE routes
+fastify.register(cors, { origin: true });
+fastify.register(helmet);
+
+// ============================================================
+// ROUTES - ALL DEFINED BEFORE LISTENING
+// ============================================================
+
+// Health check
+fastify.get('/health', async () => {
+  try {
+    await db.query('SELECT 1');
+    return { status: 'ok', database: 'connected', service: 'ale-kircha-api' };
+  } catch {
+    return { status: 'error', database: 'disconnected' };
+  }
+});
+
+// API Version
+fastify.get('/api/v1/health', async () => {
+  return {
+    status: 'ok',
+    service: 'ale-kircha-api',
+    version: '1.0.0',
+    timestamp: new Date().toISOString()
+  };
+});
+
+// Customer Registration
+fastify.post('/api/v1/customers/register', async (request, reply) => {
+  try {
+    const { telegramId, phoneNumber, firstName, lastName } = request.body as any;
+
+    if (!telegramId) {
+      return reply.status(400).send({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: 'telegramId is required' }
+      });
+    }
+
+    // Check if user exists
+    const existing = await db.query(
+      'SELECT * FROM "User" WHERE "telegramId" = $1',
+      [String(telegramId)]
+    );
+
+    if (existing.rows.length > 0) {
+      return {
+        success: true,
+        data: { user: existing.rows[0], status: 'EXISTING' }
+      };
+    }
+
+    // Create new user
+    const result = await db.query(
+      `INSERT INTO "User" (id, "telegramId", "firstName", "lastName", phone, role, "createdAt", "updatedAt")
+       VALUES (gen_random_uuid()::text, $1, $2, $3, $4, 'CUSTOMER', NOW(), NOW())
+       RETURNING *`,
+      [String(telegramId), firstName || 'User', lastName || '', phoneNumber || '']
+    );
+
+    const user = result.rows[0];
+
+    // Create customer record
+    const customerResult = await db.query(
+      `INSERT INTO "Customer" (id, "userId", "fullName", "additionalPhone", "preferredLanguage", "registrationDate", "status")
+       VALUES (gen_random_uuid()::text, $1, $2, $3, 'en', NOW(), 'ACTIVE')
+       RETURNING *`,
+      [user.id, firstName + ' ' + (lastName || ''), '']
+    );
+
+    return {
+      success: true,
+      data: {
+        user: user,
+        customer: customerResult.rows[0],
+        status: 'CREATED'
+      }
+    };
+  } catch (error: any) {
+    fastify.log.error(error);
+    return reply.status(500).send({
+      success: false,
+      error: { code: 'INTERNAL_ERROR', message: error.message }
+    });
+  }
+});
+
+// Customer profile
+fastify.get('/api/v1/customers/me', async (request, reply) => {
+  try {
+    const telegramId = request.headers['x-telegram-id'];
+    if (!telegramId) {
+      return reply.status(401).send({
+        success: false,
+        error: { code: 'UNAUTHORIZED', message: 'Missing Telegram ID' }
+      });
+    }
+
+    const result = await db.query(
+      `SELECT c.*, u.* FROM "Customer" c
+       JOIN "User" u ON c."userId" = u.id
+       WHERE u."telegramId" = $1`,
+      [String(telegramId)]
+    );
+
+    if (result.rows.length === 0) {
+      return reply.status(404).send({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Customer not found' }
+      });
+    }
+
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return reply.status(500).send({
+      success: false,
+      error: { code: 'INTERNAL_ERROR', message: error.message }
+    });
+  }
+});
+
+// Admin stats
+fastify.get('/api/v1/admin/stats', async () => {
+  const [users, customers, orders, groups] = await Promise.all([
+    db.query('SELECT COUNT(*) FROM "User"'),
+    db.query('SELECT COUNT(*) FROM "Customer"'),
+    db.query('SELECT COUNT(*) FROM "Order"'),
+    db.query('SELECT COUNT(*) FROM "KirchaGroup"'),
+  ]);
+
+  return {
+    success: true,
+    data: {
+      users: parseInt(users.rows[0].count),
+      customers: parseInt(customers.rows[0].count),
+      orders: parseInt(orders.rows[0].count),
+      groups: parseInt(groups.rows[0].count),
+    }
+  };
+});
+
+// Debug - list users
+fastify.get('/api/v1/debug/users', async () => {
+  const result = await db.query('SELECT id, "telegramId", "firstName", "lastName", phone FROM "User" LIMIT 10');
+  return { success: true, data: result.rows };
+});
+
+// ============================================================
+// START SERVER
+// ============================================================
+
+const start = async () => {
+  const port = Number(process.env.PORT) || 4000;
+  const host = process.env.HOST || '0.0.0.0';
+
+  await fastify.listen({ port, host });
+  console.log(`🚀 API running on ${host}:${port}`);
+  console.log(`📊 Health: http://${host}:${port}/health`);
+};
+
+start().catch(err => {
+  console.error('❌ Failed to start API:', err.message);
+  process.exit(1);
+});
+
+// ============================================================
+// ADMIN BOT ENDPOINTS - REAL DATA
+// ============================================================
+
+// Admin stats
+fastify.get('/api/v1/admin/stats', async (request, reply) => {
+  try {
+    const users = await db.query('SELECT COUNT(*) FROM "User"');
+    const customers = await db.query('SELECT COUNT(*) FROM "Customer"');
+    const groups = await db.query('SELECT COUNT(*) FROM "Groups" WHERE status IN ($1, $2)', ['OPEN', 'ACTIVE']);
+    const orders = await db.query('SELECT COUNT(*) FROM "Orders"');
+    const payments = await db.query('SELECT COUNT(*) FROM "Payments" WHERE status = $1', ['PENDING']);
+    const revenue = await db.query('SELECT COALESCE(SUM("totalAmount"), 0) FROM "Orders" WHERE "orderStatus" = $1', ['COMPLETED']);
+    
+    return {
+      success: true,
+      data: {
+        users: parseInt(users.rows[0].count),
+        customers: parseInt(customers.rows[0].count),
+        groups: parseInt(groups.rows[0].count),
+        orders: parseInt(orders.rows[0].count),
+        payments: parseInt(payments.rows[0].count),
+        revenue: parseFloat(revenue.rows[0].coalesce)
+      }
+    };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Customers list
+fastify.get('/api/v1/customers', async (request, reply) => {
+  try {
+    const result = await db.query(`
+      SELECT c.*, u.phone, u."telegramId", u.username 
+      FROM "Customer" c 
+      JOIN "User" u ON c."userId" = u.id 
+      ORDER BY c."createdAt" DESC
+    `);
+    return { success: true, data: result.rows };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Groups list
+fastify.get('/api/v1/kircha/groups', async (request, reply) => {
+  try {
+    const result = await db.query(`
+      SELECT g.*, k."nameEn" as "kirchaTypeName" 
+      FROM "Groups" g 
+      LEFT JOIN "KirchaTypes" k ON g."kirchaTypeId" = k.id 
+      ORDER BY g."createdAt" DESC
+    `);
+    return { success: true, data: result.rows };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Orders list
+fastify.get('/api/v1/orders', async (request, reply) => {
+  try {
+    const result = await db.query(`
+      SELECT o.*, c."fullName" as "customerName" 
+      FROM "Orders" o 
+      JOIN "Customer" c ON o."customerId" = c.id 
+      ORDER BY o."createdAt" DESC
+    `);
+    return { success: true, data: result.rows };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Payments list
+fastify.get('/api/v1/payments', async (request, reply) => {
+  try {
+    const result = await db.query(`
+      SELECT p.*, c."fullName" as "customerName" 
+      FROM "Payments" p 
+      JOIN "Customer" c ON p."customerId" = c.id 
+      ORDER BY p."createdAt" DESC
+    `);
+    return { success: true, data: result.rows };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Refunds list
+fastify.get('/api/v1/refunds', async (request, reply) => {
+  try {
+    const result = await db.query(`
+      SELECT r.*, c."fullName" as "customerName" 
+      FROM "Refunds" r 
+      JOIN "Customer" c ON r."customerId" = c.id 
+      ORDER BY r."createdAt" DESC
+    `);
+    return { success: true, data: result.rows };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Deliveries list
+fastify.get('/api/v1/deliveries', async (request, reply) => {
+  try {
+    const result = await db.query(`
+      SELECT d.*, o."orderNumber", c."fullName" as "customerName" 
+      FROM "Deliveries" d 
+      JOIN "Orders" o ON d."orderId" = o.id 
+      JOIN "Customer" c ON o."customerId" = c.id 
+      ORDER BY d."createdAt" DESC
+    `);
+    return { success: true, data: result.rows };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Settings
+fastify.get('/api/v1/settings', async (request, reply) => {
+  try {
+    const result = await db.query('SELECT * FROM "SystemSettings"');
+    const settings = {};
+    result.rows.forEach(row => {
+      settings[row.key] = row.value;
+    });
+    return { success: true, data: settings };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// FAQ
+fastify.get('/api/v1/faq', async (request, reply) => {
+  try {
+    const result = await db.query('SELECT * FROM "FAQ" ORDER BY "displayOrder"');
+    return { success: true, data: result.rows };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Support Tickets
+fastify.get('/api/v1/support/tickets', async (request, reply) => {
+  try {
+    const result = await db.query(`
+      SELECT st.*, c."fullName" as "customerName" 
+      FROM "SupportTickets" st 
+      JOIN "Customer" c ON st."customerId" = c.id 
+      ORDER BY st."createdAt" DESC
+    `);
+    return { success: true, data: result.rows };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Audit Log
+fastify.get('/api/v1/audit', async (request, reply) => {
+  try {
+    const result = await db.query(`
+      SELECT al.*, u.username 
+      FROM "AuditLog" al 
+      LEFT JOIN "User" u ON al."userId" = u.id 
+      ORDER BY al."createdAt" DESC 
+      LIMIT 50
+    `);
+    return { success: true, data: result.rows };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Admin Users
+fastify.get('/api/v1/admin/users', async (request, reply) => {
+  try {
+    const result = await db.query('SELECT * FROM "User" WHERE role IN ($1, $2, $3)', ['ADMIN', 'SUPER_ADMIN', 'PAYMENT_VERIFIER']);
+    return { success: true, data: result.rows };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Terms
+fastify.get('/api/v1/terms', async (request, reply) => {
+  try {
+    const result = await db.query('SELECT * FROM "TermsVersion" ORDER BY "version" DESC');
+    return { success: true, data: result.rows };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// About
+fastify.get('/api/v1/about', async (request, reply) => {
+  try {
+    return { 
+      success: true, 
+      data: {
+        title: 'Ale Kircha',
+        content: 'Ale Kircha is a digital meat-sharing platform that connects customers with organized Kircha groups.'
+      }
+    };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Self Help
+fastify.get('/api/v1/selfhelp', async (request, reply) => {
+  try {
+    // Create self help articles if none exist
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS "SelfHelp" (
+        id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        "titleEn" TEXT NOT NULL,
+        "titleAm" TEXT NOT NULL,
+        "contentEn" TEXT NOT NULL,
+        "contentAm" TEXT NOT NULL,
+        category TEXT DEFAULT 'general',
+        "displayOrder" INTEGER DEFAULT 0,
+        "isActive" BOOLEAN DEFAULT true,
+        "createdAt" TIMESTAMP DEFAULT NOW(),
+        "updatedAt" TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    
+    // Insert sample if empty
+    const count = await db.query('SELECT COUNT(*) FROM "SelfHelp"');
+    if (parseInt(count.rows[0].count) === 0) {
+      await db.query(`
+        INSERT INTO "SelfHelp" ("titleEn", "titleAm", "contentEn", "contentAm") VALUES 
+        ('How to use Ale Kircha', 'አሌ ቅርጫን እንዴት መጠቀም እንደሚቻል', 
+         'Step by step guide to using Ale Kircha...', 
+         'አሌ ቅርጫን ለመጠቀም ደረጃ በደረጃ መመሪያ...')
+      `);
+    }
+    
+    const result = await db.query('SELECT * FROM "SelfHelp" ORDER BY "displayOrder"');
+    return { success: true, data: result.rows };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Fees
+fastify.get('/api/v1/fees', async (request, reply) => {
+  try {
+    const category = request.query.category || '';
+    let query = 'SELECT * FROM "FeeConfiguration"';
+    if (category) {
+      query += ` WHERE category = $1`;
+    }
+    const result = await db.query(query, category ? [category] : []);
+    return { success: true, data: result.rows };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Reports
+fastify.get('/api/v1/admin/reports/:type', async (request, reply) => {
+  try {
+    const type = (request.params as any).type;
+    const results: any = {};
+    
+    switch(type) {
+      case 'sales':
+        const sales = await db.query('SELECT COUNT(*) as count, COALESCE(SUM("totalAmount"), 0) as total FROM "Orders" WHERE "orderStatus" = $1', ['COMPLETED']);
+        results['Total Sales'] = sales.rows[0].total;
+        results['Orders'] = sales.rows[0].count;
+        break;
+      case 'orders':
+        const pending = await db.query('SELECT COUNT(*) FROM "Orders" WHERE "orderStatus" = $1', ['PENDING_PAYMENT']);
+        const completed = await db.query('SELECT COUNT(*) FROM "Orders" WHERE "orderStatus" = $1', ['COMPLETED']);
+        const cancelled = await db.query('SELECT COUNT(*) FROM "Orders" WHERE "orderStatus" = $1', ['CANCELLED']);
+        results['Pending'] = pending.rows[0].count;
+        results['Completed'] = completed.rows[0].count;
+        results['Cancelled'] = cancelled.rows[0].count;
+        break;
+      case 'payments':
+        const paid = await db.query('SELECT COUNT(*) FROM "Payments" WHERE status = $1', ['VERIFIED']);
+        const unpaid = await db.query('SELECT COUNT(*) FROM "Payments" WHERE status = $1', ['PENDING']);
+        results['Verified'] = paid.rows[0].count;
+        results['Pending'] = unpaid.rows[0].count;
+        break;
+      case 'customers':
+        const total = await db.query('SELECT COUNT(*) FROM "Customer"');
+        const active = await db.query('SELECT COUNT(*) FROM "Customer" WHERE status = $1', ['ACTIVE']);
+        results['Total'] = total.rows[0].count;
+        results['Active'] = active.rows[0].count;
+        break;
+      case 'groups':
+        const open = await db.query('SELECT COUNT(*) FROM "Groups" WHERE status = $1', ['OPEN']);
+        const full = await db.query('SELECT COUNT(*) FROM "Groups" WHERE status = $1', ['FULL']);
+        results['Open'] = open.rows[0].count;
+        results['Full'] = full.rows[0].count;
+        break;
+    }
+    
+    return { success: true, data: results };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// ADMIN DASHBOARD STATS
+// ============================================================
+
+fastify.get('/api/v1/admin/stats', async (request, reply) => {
+  try {
+    const users = await db.query('SELECT COUNT(*) FROM "User"');
+    const customers = await db.query('SELECT COUNT(*) FROM "Customer"');
+    const groups = await db.query('SELECT COUNT(*) FROM "Groups" WHERE status IN ($1, $2)', ['OPEN', 'ACTIVE']);
+    const orders = await db.query('SELECT COUNT(*) FROM "Orders"');
+    const payments = await db.query('SELECT COUNT(*) FROM "Payments" WHERE status = $1', ['PENDING']);
+    const revenue = await db.query('SELECT COALESCE(SUM("totalAmount"), 0) FROM "Orders" WHERE "orderStatus" = $1', ['COMPLETED']);
+    
+    return {
+      success: true,
+      data: {
+        users: parseInt(users.rows[0].count),
+        customers: parseInt(customers.rows[0].count),
+        groups: parseInt(groups.rows[0].count),
+        orders: parseInt(orders.rows[0].count),
+        payments: parseInt(payments.rows[0].count),
+        revenue: parseFloat(revenue.rows[0].coalesce)
+      }
+    };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// CUSTOMERS
+// ============================================================
+
+fastify.get('/api/v1/customers', async (request, reply) => {
+  try {
+    const result = await db.query(`
+      SELECT c.*, u.phone, u."telegramId", u.username 
+      FROM "Customer" c 
+      JOIN "User" u ON c."userId" = u.id 
+      ORDER BY c."createdAt" DESC
+    `);
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// GROUPS
+// ============================================================
+
+fastify.get('/api/v1/kircha/groups', async (request, reply) => {
+  try {
+    const result = await db.query(`
+      SELECT g.*, k."nameEn" as "kirchaTypeName" 
+      FROM "Groups" g 
+      LEFT JOIN "KirchaTypes" k ON g."kirchaTypeId" = k.id 
+      ORDER BY g."createdAt" DESC
+    `);
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// ORDERS
+// ============================================================
+
+fastify.get('/api/v1/orders', async (request, reply) => {
+  try {
+    const result = await db.query(`
+      SELECT o.*, c."fullName" as "customerName" 
+      FROM "Orders" o 
+      JOIN "Customer" c ON o."customerId" = c.id 
+      ORDER BY o."createdAt" DESC
+    `);
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// PAYMENTS
+// ============================================================
+
+fastify.get('/api/v1/payments', async (request, reply) => {
+  try {
+    const result = await db.query(`
+      SELECT p.*, c."fullName" as "customerName" 
+      FROM "Payments" p 
+      JOIN "Customer" c ON p."customerId" = c.id 
+      ORDER BY p."createdAt" DESC
+    `);
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// REFUNDS
+// ============================================================
+
+fastify.get('/api/v1/refunds', async (request, reply) => {
+  try {
+    const result = await db.query(`
+      SELECT r.*, c."fullName" as "customerName" 
+      FROM "Refunds" r 
+      JOIN "Customer" c ON r."customerId" = c.id 
+      ORDER BY r."createdAt" DESC
+    `);
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// DELIVERIES
+// ============================================================
+
+fastify.get('/api/v1/deliveries', async (request, reply) => {
+  try {
+    const result = await db.query(`
+      SELECT d.*, o."orderNumber", c."fullName" as "customerName" 
+      FROM "Deliveries" d 
+      JOIN "Orders" o ON d."orderId" = o.id 
+      JOIN "Customer" c ON o."customerId" = c.id 
+      ORDER BY d."createdAt" DESC
+    `);
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// ALL ADMIN BOT ENDPOINTS
+// ============================================================
+
+// ---------- Dashboard ----------
+fastify.get('/api/v1/admin/stats', async (request, reply) => {
+  try {
+    const users = await db.query('SELECT COUNT(*) FROM "User"');
+    const customers = await db.query('SELECT COUNT(*) FROM "Customer"');
+    const groups = await db.query('SELECT COUNT(*) FROM "Groups" WHERE status IN ($1, $2, $3)', ['OPEN', 'ACTIVE', 'DRAFT']);
+    const orders = await db.query('SELECT COUNT(*) FROM "Orders"');
+    const payments = await db.query('SELECT COUNT(*) FROM "Payments" WHERE status = $1', ['PENDING']);
+    const revenue = await db.query('SELECT COALESCE(SUM("totalAmount"), 0) FROM "Orders" WHERE "orderStatus" = $1', ['COMPLETED']);
+    const refunds = await db.query('SELECT COUNT(*) FROM "Refunds" WHERE status = $1', ['PENDING']);
+    const deliveries = await db.query('SELECT COUNT(*) FROM "Deliveries" WHERE status IN ($1, $2)', ['PENDING', 'ASSIGNED']);
+    
+    return {
+      success: true,
+      data: {
+        users: parseInt(users.rows[0].count),
+        customers: parseInt(customers.rows[0].count),
+        groups: parseInt(groups.rows[0].count),
+        orders: parseInt(orders.rows[0].count),
+        payments: parseInt(payments.rows[0].count),
+        revenue: parseFloat(revenue.rows[0].coalesce),
+        refunds: parseInt(refunds.rows[0].count),
+        deliveries: parseInt(deliveries.rows[0].count)
+      }
+    };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ---------- Customers ----------
+fastify.get('/api/v1/customers', async (request, reply) => {
+  try {
+    const result = await db.query(`
+      SELECT c.*, u.phone, u."telegramId", u.username 
+      FROM "Customer" c 
+      JOIN "User" u ON c."userId" = u.id 
+      ORDER BY c."createdAt" DESC
+    `);
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.get('/api/v1/customers/:id', async (request, reply) => {
+  try {
+    const { id } = request.params as any;
+    const result = await db.query(`
+      SELECT c.*, u.phone, u."telegramId", u.username 
+      FROM "Customer" c 
+      JOIN "User" u ON c."userId" = u.id 
+      WHERE c.id = $1
+    `, [id]);
+    if (result.rows.length === 0) {
+      return { success: false, error: 'Customer not found' };
+    }
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ---------- Groups ----------
+fastify.get('/api/v1/kircha/groups', async (request, reply) => {
+  try {
+    const result = await db.query(`
+      SELECT g.*, k."nameEn" as "kirchaTypeName" 
+      FROM "Groups" g 
+      LEFT JOIN "KirchaTypes" k ON g."kirchaTypeId" = k.id 
+      ORDER BY g."createdAt" DESC
+    `);
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.get('/api/v1/kircha/groups/:id', async (request, reply) => {
+  try {
+    const { id } = request.params as any;
+    const result = await db.query(`
+      SELECT g.*, k."nameEn" as "kirchaTypeName" 
+      FROM "Groups" g 
+      LEFT JOIN "KirchaTypes" k ON g."kirchaTypeId" = k.id 
+      WHERE g.id = $1
+    `, [id]);
+    if (result.rows.length === 0) {
+      return { success: false, error: 'Group not found' };
+    }
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ---------- Orders ----------
+fastify.get('/api/v1/orders', async (request, reply) => {
+  try {
+    const result = await db.query(`
+      SELECT o.*, c."fullName" as "customerName" 
+      FROM "Orders" o 
+      JOIN "Customer" c ON o."customerId" = c.id 
+      ORDER BY o."createdAt" DESC
+    `);
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.get('/api/v1/orders/:id', async (request, reply) => {
+  try {
+    const { id } = request.params as any;
+    const result = await db.query(`
+      SELECT o.*, c."fullName" as "customerName" 
+      FROM "Orders" o 
+      JOIN "Customer" c ON o."customerId" = c.id 
+      WHERE o.id = $1
+    `, [id]);
+    if (result.rows.length === 0) {
+      return { success: false, error: 'Order not found' };
+    }
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ---------- Payments ----------
+fastify.get('/api/v1/payments', async (request, reply) => {
+  try {
+    const result = await db.query(`
+      SELECT p.*, c."fullName" as "customerName" 
+      FROM "Payments" p 
+      JOIN "Customer" c ON p."customerId" = c.id 
+      ORDER BY p."createdAt" DESC
+    `);
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.get('/api/v1/payments/:id', async (request, reply) => {
+  try {
+    const { id } = request.params as any;
+    const result = await db.query(`
+      SELECT p.*, c."fullName" as "customerName" 
+      FROM "Payments" p 
+      JOIN "Customer" c ON p."customerId" = c.id 
+      WHERE p.id = $1
+    `, [id]);
+    if (result.rows.length === 0) {
+      return { success: false, error: 'Payment not found' };
+    }
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ---------- Refunds ----------
+fastify.get('/api/v1/refunds', async (request, reply) => {
+  try {
+    const result = await db.query(`
+      SELECT r.*, c."fullName" as "customerName" 
+      FROM "Refunds" r 
+      JOIN "Customer" c ON r."customerId" = c.id 
+      ORDER BY r."createdAt" DESC
+    `);
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.get('/api/v1/refunds/:id', async (request, reply) => {
+  try {
+    const { id } = request.params as any;
+    const result = await db.query(`
+      SELECT r.*, c."fullName" as "customerName" 
+      FROM "Refunds" r 
+      JOIN "Customer" c ON r."customerId" = c.id 
+      WHERE r.id = $1
+    `, [id]);
+    if (result.rows.length === 0) {
+      return { success: false, error: 'Refund not found' };
+    }
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ---------- Deliveries ----------
+fastify.get('/api/v1/deliveries', async (request, reply) => {
+  try {
+    const result = await db.query(`
+      SELECT d.*, o."orderNumber", c."fullName" as "customerName" 
+      FROM "Deliveries" d 
+      JOIN "Orders" o ON d."orderId" = o.id 
+      JOIN "Customer" c ON o."customerId" = c.id 
+      ORDER BY d."createdAt" DESC
+    `);
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ---------- Reports ----------
+fastify.get('/api/v1/admin/reports/sales', async (request, reply) => {
+  try {
+    const total = await db.query('SELECT COALESCE(SUM("totalAmount"), 0) FROM "Orders" WHERE "orderStatus" = $1', ['COMPLETED']);
+    const count = await db.query('SELECT COUNT(*) FROM "Orders" WHERE "orderStatus" = $1', ['COMPLETED']);
+    const avg = await db.query('SELECT COALESCE(AVG("totalAmount"), 0) FROM "Orders" WHERE "orderStatus" = $1', ['COMPLETED']);
+    return {
+      success: true,
+      data: {
+        'Total Revenue': parseFloat(total.rows[0].coalesce).toFixed(2),
+        'Orders Completed': parseInt(count.rows[0].count),
+        'Average Order Value': parseFloat(avg.rows[0].coalesce).toFixed(2)
+      }
+    };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.get('/api/v1/admin/reports/orders', async (request, reply) => {
+  try {
+    const pending = await db.query('SELECT COUNT(*) FROM "Orders" WHERE "orderStatus" = $1', ['PENDING_PAYMENT']);
+    const inprogress = await db.query('SELECT COUNT(*) FROM "Orders" WHERE "orderStatus" = $1', ['IN_PROGRESS']);
+    const completed = await db.query('SELECT COUNT(*) FROM "Orders" WHERE "orderStatus" = $1', ['COMPLETED']);
+    const cancelled = await db.query('SELECT COUNT(*) FROM "Orders" WHERE "orderStatus" = $1', ['CANCELLED']);
+    return {
+      success: true,
+      data: {
+        'Pending': parseInt(pending.rows[0].count),
+        'In Progress': parseInt(inprogress.rows[0].count),
+        'Completed': parseInt(completed.rows[0].count),
+        'Cancelled': parseInt(cancelled.rows[0].count)
+      }
+    };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.get('/api/v1/admin/reports/payments', async (request, reply) => {
+  try {
+    const pending = await db.query('SELECT COUNT(*) FROM "Payments" WHERE status = $1', ['PENDING']);
+    const verified = await db.query('SELECT COUNT(*) FROM "Payments" WHERE status = $1', ['VERIFIED']);
+    const rejected = await db.query('SELECT COUNT(*) FROM "Payments" WHERE status = $1', ['REJECTED']);
+    return {
+      success: true,
+      data: {
+        'Pending': parseInt(pending.rows[0].count),
+        'Verified': parseInt(verified.rows[0].count),
+        'Rejected': parseInt(rejected.rows[0].count)
+      }
+    };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.get('/api/v1/admin/reports/customers', async (request, reply) => {
+  try {
+    const total = await db.query('SELECT COUNT(*) FROM "Customer"');
+    const active = await db.query('SELECT COUNT(*) FROM "Customer" WHERE status = $1', ['ACTIVE']);
+    const suspended = await db.query('SELECT COUNT(*) FROM "Customer" WHERE status = $1', ['SUSPENDED']);
+    return {
+      success: true,
+      data: {
+        'Total': parseInt(total.rows[0].count),
+        'Active': parseInt(active.rows[0].count),
+        'Suspended': parseInt(suspended.rows[0].count)
+      }
+    };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.get('/api/v1/admin/reports/groups', async (request, reply) => {
+  try {
+    const open = await db.query('SELECT COUNT(*) FROM "Groups" WHERE status = $1', ['OPEN']);
+    const full = await db.query('SELECT COUNT(*) FROM "Groups" WHERE status = $1', ['FULL']);
+    const completed = await db.query('SELECT COUNT(*) FROM "Groups" WHERE status = $1', ['COMPLETED']);
+    const cancelled = await db.query('SELECT COUNT(*) FROM "Groups" WHERE status = $1', ['CANCELLED']);
+    return {
+      success: true,
+      data: {
+        'Open': parseInt(open.rows[0].count),
+        'Full': parseInt(full.rows[0].count),
+        'Completed': parseInt(completed.rows[0].count),
+        'Cancelled': parseInt(cancelled.rows[0].count)
+      }
+    };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ---------- Fees ----------
+fastify.get('/api/v1/fees', async (request, reply) => {
+  try {
+    const category = (request.query as any).category || '';
+    let query = 'SELECT * FROM "FeeConfiguration"';
+    const params: any[] = [];
+    if (category) {
+      query += ' WHERE category = $1';
+      params.push(category);
+    }
+    query += ' ORDER BY "createdAt" DESC';
+    const result = await db.query(query, params);
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ---------- Settings ----------
+fastify.get('/api/v1/settings', async (request, reply) => {
+  try {
+    const result = await db.query('SELECT * FROM "SystemSettings" ORDER BY key');
+    const settings: Record<string, string> = {};
+    result.rows.forEach(row => {
+      settings[row.key] = row.value;
+    });
+    return { success: true, data: settings };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ---------- Admin Users ----------
+fastify.get('/api/v1/admin/users', async (request, reply) => {
+  try {
+    const result = await db.query(`
+      SELECT id, "telegramId", username, "firstName", "lastName", role, "isActive" 
+      FROM "User" 
+      WHERE role IN ($1, $2, $3, $4)
+      ORDER BY "createdAt" DESC
+    `, ['ADMIN', 'SUPER_ADMIN', 'PAYMENT_VERIFIER', 'ORDER_MANAGER']);
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ---------- Audit Log ----------
+fastify.get('/api/v1/audit', async (request, reply) => {
+  try {
+    const result = await db.query(`
+      SELECT al.*, u.username 
+      FROM "AuditLog" al 
+      LEFT JOIN "User" u ON al."userId" = u.id 
+      ORDER BY al."createdAt" DESC 
+      LIMIT 50
+    `);
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ---------- Support Tickets ----------
+fastify.get('/api/v1/support/tickets', async (request, reply) => {
+  try {
+    const result = await db.query(`
+      SELECT st.*, c."fullName" as "customerName" 
+      FROM "SupportTickets" st 
+      JOIN "Customer" c ON st."customerId" = c.id 
+      ORDER BY st."createdAt" DESC
+    `);
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ---------- FAQ ----------
+fastify.get('/api/v1/faq', async (request, reply) => {
+  try {
+    const result = await db.query('SELECT * FROM "FAQ" ORDER BY "displayOrder"');
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ---------- Terms ----------
+fastify.get('/api/v1/terms', async (request, reply) => {
+  try {
+    const result = await db.query('SELECT * FROM "TermsVersion" ORDER BY version DESC');
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ---------- About ----------
+fastify.get('/api/v1/about', async (request, reply) => {
+  try {
+    // Check if about table exists, if not create it
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS "About" (
+        id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        title TEXT NOT NULL DEFAULT 'Ale Kircha',
+        content TEXT NOT NULL DEFAULT 'Ale Kircha is a digital meat-sharing platform.',
+        "updatedAt" TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    const result = await db.query('SELECT * FROM "About" LIMIT 1');
+    if (result.rows.length === 0) {
+      await db.query(`
+        INSERT INTO "About" (title, content) VALUES 
+        ('Ale Kircha', 'Ale Kircha is a digital meat-sharing platform that connects customers with organized Kircha groups.')
+      `);
+      const newResult = await db.query('SELECT * FROM "About" LIMIT 1');
+      return { success: true, data: newResult.rows[0] };
+    }
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ---------- Self Help ----------
+fastify.get('/api/v1/selfhelp', async (request, reply) => {
+  try {
+    // Create self help table if not exists
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS "SelfHelp" (
+        id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        "titleEn" TEXT NOT NULL,
+        "titleAm" TEXT NOT NULL,
+        "contentEn" TEXT NOT NULL,
+        "contentAm" TEXT NOT NULL,
+        category TEXT DEFAULT 'general',
+        "displayOrder" INTEGER DEFAULT 0,
+        "isActive" BOOLEAN DEFAULT true,
+        "createdAt" TIMESTAMP DEFAULT NOW(),
+        "updatedAt" TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    const result = await db.query('SELECT * FROM "SelfHelp" ORDER BY "displayOrder"');
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// ADDITIONAL ADMIN ENDPOINTS
+// ============================================================
+
+// Admin Users - Get all admin users
+fastify.get('/api/v1/admin/users', async (request, reply) => {
+  try {
+    const result = await db.query(`
+      SELECT id, "telegramId", username, "firstName", "lastName", role, "isActive" 
+      FROM "User" 
+      WHERE role IN ($1, $2, $3, $4)
+      ORDER BY "createdAt" DESC
+    `, ['ADMIN', 'SUPER_ADMIN', 'PAYMENT_VERIFIER', 'ORDER_MANAGER']);
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Audit Log - Get recent audit logs
+fastify.get('/api/v1/audit', async (request, reply) => {
+  try {
+    const result = await db.query(`
+      SELECT al.*, u.username 
+      FROM "AuditLog" al 
+      LEFT JOIN "User" u ON al."userId" = u.id 
+      ORDER BY al."createdAt" DESC 
+      LIMIT 50
+    `);
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Support Tickets
+fastify.get('/api/v1/support/tickets', async (request, reply) => {
+  try {
+    const result = await db.query(`
+      SELECT st.*, c."fullName" as "customerName" 
+      FROM "SupportTickets" st 
+      JOIN "Customer" c ON st."customerId" = c.id 
+      ORDER BY st."createdAt" DESC
+    `);
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// FAQ
+fastify.get('/api/v1/faq', async (request, reply) => {
+  try {
+    const result = await db.query('SELECT * FROM "FAQ" ORDER BY "displayOrder"');
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Terms
+fastify.get('/api/v1/terms', async (request, reply) => {
+  try {
+    const result = await db.query('SELECT * FROM "TermsVersion" ORDER BY version DESC');
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// About
+fastify.get('/api/v1/about', async (request, reply) => {
+  try {
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS "About" (
+        id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        title TEXT NOT NULL DEFAULT 'Ale Kircha',
+        content TEXT NOT NULL DEFAULT 'Ale Kircha is a digital meat-sharing platform.',
+        "updatedAt" TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    const result = await db.query('SELECT * FROM "About" LIMIT 1');
+    if (result.rows.length === 0) {
+      await db.query(`
+        INSERT INTO "About" (title, content) VALUES 
+        ('Ale Kircha', 'Ale Kircha is a digital meat-sharing platform that connects customers with organized Kircha groups.')
+      `);
+      const newResult = await db.query('SELECT * FROM "About" LIMIT 1');
+      return { success: true, data: newResult.rows[0] };
+    }
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Self Help
+fastify.get('/api/v1/selfhelp', async (request, reply) => {
+  try {
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS "SelfHelp" (
+        id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        "titleEn" TEXT NOT NULL,
+        "titleAm" TEXT NOT NULL,
+        "contentEn" TEXT NOT NULL,
+        "contentAm" TEXT NOT NULL,
+        category TEXT DEFAULT 'general',
+        "displayOrder" INTEGER DEFAULT 0,
+        "isActive" BOOLEAN DEFAULT true,
+        "createdAt" TIMESTAMP DEFAULT NOW(),
+        "updatedAt" TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    const result = await db.query('SELECT * FROM "SelfHelp" ORDER BY "displayOrder"');
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Reports - Delivery
+fastify.get('/api/v1/admin/reports/delivery', async (request, reply) => {
+  try {
+    const pending = await db.query('SELECT COUNT(*) FROM "Deliveries" WHERE status = $1', ['PENDING']);
+    const assigned = await db.query('SELECT COUNT(*) FROM "Deliveries" WHERE status = $1', ['ASSIGNED']);
+    const delivered = await db.query('SELECT COUNT(*) FROM "Deliveries" WHERE status = $1', ['DELIVERED']);
+    const failed = await db.query('SELECT COUNT(*) FROM "Deliveries" WHERE status = $1', ['FAILED']);
+    return {
+      success: true,
+      data: {
+        'Pending': parseInt(pending.rows[0].count),
+        'Assigned': parseInt(assigned.rows[0].count),
+        'Delivered': parseInt(delivered.rows[0].count),
+        'Failed': parseInt(failed.rows[0].count)
+      }
+    };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Fees - Get all fees by category
+fastify.get('/api/v1/fees', async (request, reply) => {
+  try {
+    const category = (request.query as any).category || '';
+    let query = 'SELECT * FROM "FeeConfiguration"';
+    const params: any[] = [];
+    if (category) {
+      query += ' WHERE category = $1';
+      params.push(category);
+    }
+    query += ' ORDER BY "createdAt" DESC';
+    const result = await db.query(query, params);
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Settings - Get all settings
+fastify.get('/api/v1/settings', async (request, reply) => {
+  try {
+    const result = await db.query('SELECT * FROM "SystemSettings" ORDER BY key');
+    const settings: Record<string, string> = {};
+    result.rows.forEach(row => {
+      settings[row.key] = row.value;
+    });
+    return { success: true, data: settings };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});

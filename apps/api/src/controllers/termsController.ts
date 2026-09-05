@@ -7,16 +7,16 @@ export class TermsController {
   
   async getActiveTerms(request: FastifyRequest, reply: FastifyReply) {
     const terms = await prisma.termsVersion.findFirst({
-      where: { isActive: true },
-      orderBy: { effectiveFrom: 'desc' }
+      where: { isCurrent: true },
+      orderBy: { effectiveDate: 'desc' }
     });
     return reply.send({ success: true, data: terms });
   }
 
   async getActivePrivacy(request: FastifyRequest, reply: FastifyReply) {
     const privacy = await prisma.privacyPolicyVersion.findFirst({
-      where: { isActive: true },
-      orderBy: { effectiveFrom: 'desc' }
+      where: { isCurrent: true },
+      orderBy: { effectiveDate: 'desc' }
     });
     return reply.send({ success: true, data: privacy });
   }
@@ -41,7 +41,7 @@ export class TermsController {
         userId: user.customerId,
         termsVersionId,
         privacyVersionId,
-        languageUsed: languageUsed || 'en',
+        language: languageUsed || 'en',
         telegramUserId: user.telegramId,
         ipAddress: request.ip,
         userAgent: request.headers['user-agent'],
@@ -62,8 +62,8 @@ export class TermsController {
     const acceptance = await prisma.userLegalAcceptance.findFirst({
       where: { 
         userId: user.customerId,
-        termsVersion: { isActive: true },
-        privacyVersion: { isActive: true }
+        termsVersion: { isCurrent: true },
+        privacyVersion: { isCurrent: true }
       },
       orderBy: { acceptedAt: 'desc' }
     });

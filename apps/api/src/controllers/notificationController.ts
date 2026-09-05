@@ -1,56 +1,83 @@
-import { FastifyRequest, FastifyReply } from 'fastify';
-import prisma from '../lib/prisma.js';
+import { PrismaClient } from '@prisma/client';
 
-export class NotificationController {
-  async getMyNotifications(request: FastifyRequest, reply: FastifyReply) {
-    const user = (request as any).user;
-    if (!user || !user.customerId) {
-      return reply.send({ success: true, data: [] });
+const prisma = new PrismaClient();
+
+export const notificationController = {
+  // Get all notifications for a customer
+  async getNotifications(req: any, res: any) {
+    try {
+      const customer = req.user;
+      const notifications = await prisma.notification.findMany({
+        where: { 
+          customer: { 
+            connect: { id: customer.id } 
+          } 
+        },
+        orderBy: { 
+          createdAt: 'desc' 
+        },
+      });
+      res.json({ success: true, data: notifications });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
     }
+  },
 
-    const customer = await prisma.customer.findUnique({
-      where: { id: user.customerId }
-    });
-    if (!customer) return reply.send({ success: true, data: [] });
-    
-    const notifications = await prisma.notification.findMany({
-      where: { customerId: customer.id },
-      orderBy: { sentAt: 'desc' },
-      take: 50
-    });
-    return reply.send({ success: true, data: notifications });
-  }
-
-  async markRead(request: FastifyRequest, reply: FastifyReply) {
-    const { id } = request.params as { id: string };
-    const notification = await prisma.notification.update({
-      where: { id },
-      data: { read: true }
-    });
-    return reply.send({ success: true, data: notification });
-  }
-
-  async markAllRead(request: FastifyRequest, reply: FastifyReply) {
-    const user = (request as any).user;
-    if (!user || !user.customerId) {
-      return reply.send({ success: true });
+  // Mark notification as read
+  async markAsRead(req: any, res: any) {
+    try {
+      const { id } = req.params;
+      const notification = await prisma.notification.update({
+        where: { id },
+        data: { 
+          isRead: true 
+        },
+      });
+      res.json({ success: true, data: notification });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
     }
-    await prisma.notification.updateMany({
-      where: { customerId: user.customerId, read: false },
-      data: { read: true }
-    });
-    return reply.send({ success: true });
-  }
+  },
 
-  async getUnreadCount(request: FastifyRequest, reply: FastifyReply) {
-    const user = (request as any).user;
-    if (!user || !user.customerId) {
-      return reply.send({ success: true, data: { count: 0 } });
+  // Mark all notifications as read for a customer
+  async markAllAsRead(req: any, res: any) {
+    try {
+      const customer = req.user;
+      await prisma.notification.updateMany({
+        where: { 
+          customer: { 
+            connect: { id: customer.id } 
+          },
+          isRead: false 
+        },
+        data: { 
+          isRead: true 
+        },
+      });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
     }
-    
-    const count = await prisma.notification.count({
-      where: { customerId: user.customerId, read: false }
-    });
-    return reply.send({ success: true, data: { count } });
-  }
-}
+  },
+
+  // Get unread count
+  async getUnreadCount(req: any, res: any) {
+    try {
+      const customer = req.user;
+      const count = await prisma.notification.count({
+        where: { 
+          customer: { 
+            connect: { id: customer.id } 
+          },
+          isRead: false 
+        },
+      });
+      res.json({ success: true, data: { count } });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  },
+};
+
+export const NotificationController = notificationController;
+export default notificationController;

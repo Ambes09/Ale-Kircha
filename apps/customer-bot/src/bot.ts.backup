@@ -1,0 +1,445 @@
+import { Bot, session, Context, SessionFlavor } from 'grammy';
+import { conversations, ConversationFlavor, createConversation } from '@grammyjs/conversations';
+import dotenv from 'dotenv';
+import http from 'http';
+
+dotenv.config();
+
+// ============================================================
+// TYPES
+// ============================================================
+
+interface SessionData {
+  language: 'en' | 'am';
+  step: string;
+  isRegistered: boolean;
+  customerId: string | null;
+  phoneNumber: string | null;
+  data: {
+    firstName?: string;
+    lastName?: string;
+    address?: string;
+    additionalContact?: string;
+    phone?: string;
+    termsAccepted?: boolean;
+  };
+}
+
+type MyContext = Context & SessionFlavor<SessionData> & ConversationFlavor;
+
+// ============================================================
+// CONFIG
+// ============================================================
+
+const API_URL = process.env.API_URL || 'http://localhost:4000';
+const BOT_TOKEN = process.env.CUSTOMER_BOT_TOKEN;
+const PORT = parseInt(process.env.PORT || '10001');
+
+if (!BOT_TOKEN) {
+  console.error('❌ CUSTOMER_BOT_TOKEN is required!');
+  process.exit(1);
+}
+
+const bot = new Bot<MyContext>(BOT_TOKEN);
+
+// ============================================================
+// MIDDLEWARE
+// ============================================================
+
+// Session middleware - MUST be first
+bot.use(session({
+  initial: (): SessionData => ({
+    language: 'en',
+    step: 'start',
+    isRegistered: false,
+    customerId: null,
+    phoneNumber: null,
+    data: {},
+  }),
+}));
+
+// Conversations middleware - MUST be after session
+bot.use(conversations());
+
+// ============================================================
+// HELPERS
+// ============================================================
+
+function t(ctx: MyContext, key: string): string {
+  const lang = ctx.session.language || 'en';
+  const translations: Record<string, Record<string, string>> = {
+    en: {
+      welcome: '🥩 Welcome to Ale Kircha!',
+      chooseLanguage: 'Please select your language:',
+      languageSet: '✅ Language set!',
+      phoneRequest: '📱 Please share your phone number:',
+      phoneReceived: '✅ Phone number received!',
+      firstName: '👤 What is your first name?',
+      lastName: '👤 What is your last name?',
+      address: '📍 Please enter your delivery address:',
+      additionalContact: '📞 Additional contact (optional):',
+      terms: '📄 Please accept the Terms & Conditions:',
+      accept: '✅ I Accept',
+      decline: '❌ Decline',
+      registrationComplete: '🎉 Registration Complete!',
+      mainMenu: '📋 Main Menu',
+      existingCustomer: '👋 Welcome back!',
+      networkError: '❌ Network error. Please try again.',
+      error: '❌ Something went wrong. Please try again.',
+    },
+    am: {
+      welcome: '🥩 እንኳን ወደ አለ ቅርጫ በደህና መጡ!',
+      chooseLanguage: 'እባክዎ ቋንቋዎን ይምረጡ:',
+      languageSet: '✅ ቋንቋ ተቀየረ!',
+      phoneRequest: '📱 እባክዎ ስልክ ቁጥርዎን ያጋሩ:',
+      phoneReceived: '✅ ስልክ ቁጥር ተቀብለናል!',
+      firstName: '👤 የመጀመሪያ ስምዎ ማን ነው?',
+      lastName: '👤 የአባት ስምዎ ማን ነው?',
+      address: '📍 እባክዎ የማድረሻ አድራሻዎን ያስገቡ:',
+      additionalContact: '📞 ተጨማሪ የመገኛ መረጃ (አማራጭ):',
+      terms: '📄 እባክዎ ውሎችና ሁኔታዎቹን ይቀበሉ:',
+      accept: '✅ ተቀብያለሁ',
+      decline: '❌ አልቀበልም',
+      registrationComplete: '🎉 ምዝገባ ተጠናቀቀ!',
+      mainMenu: '📋 ዋና ምናሌ',
+      existingCustomer: '👋 እንኳን በደህና ተመለሱ!',
+      networkError: '❌ የአውታረ መረብ ችግር። እባክዎ እንደገና ይሞክሩ።',
+      error: '❌ ችግር ተፈጥሯል። እባክዎ እንደገና ይሞክሩ።',
+    },
+  };
+  return (translations[lang] as any)[key] || key;
+}
+
+async function apiCall(endpoint: string, options: any = {}, ctx?: MyContext) {
+  const headers: any = { 'Content-Type': 'application/json', ...options.headers };
+  if (ctx?.from?.id) {
+    headers['x-telegram-id'] = ctx.from.id.toString();
+  }
+  const response = await fetch(`${API_URL}${endpoint}`, { ...options, headers });
+  return response.json();
+}
+
+async function checkUserRegistration(ctx: MyContext): Promise<boolean> {
+  if (ctx.session.isRegistered && ctx.session.customerId) return true;
+  try {
+    const data = await apiCall('/api/v1/customers/me', {}, ctx);
+    if (data.success && data.data) {
+      ctx.session.isRegistered = true;
+      ctx.session.customerId = data.data.id;
+      ctx.session.phoneNumber = data.data.phone || null;
+      return true;
+    }
+  } catch (error) {}
+  return false;
+}
+
+// ============================================================
+// REGISTRATION CONVERSATION - MUST BE DEFINED BEFORE USE
+// ============================================================
+
+async function registrationConversation(conversation: any, ctx: MyContext) {
+  const lang = ctx.session.language || 'en';
+  
+  // First Name
+  await ctx.reply(lang === 'en' ? '👤 What is your first name?' : '👤 የመጀመሪያ ስምዎ ማን ነው?');
+  const firstNameResult = await conversation.waitFor(':text');
+  if (!firstNameResult.message?.text) {
+    await ctx.reply(lang === 'en' ? '❌ Please enter your first name.' : '❌ እባክዎ የመጀመሪያ ስምዎን ያስገቡ።');
+    return;
+  }
+  ctx.session.data.firstName = firstNameResult.message.text;
+
+  // Last Name
+  await ctx.reply(lang === 'en' ? '👤 What is your last name?' : '👤 የአባት ስምዎ ማን ነው?');
+  const lastNameResult = await conversation.waitFor(':text');
+  if (!lastNameResult.message?.text) {
+    await ctx.reply(lang === 'en' ? '❌ Please enter your last name.' : '❌ እባክዎ የአባት ስምዎን ያስገቡ።');
+    return;
+  }
+  ctx.session.data.lastName = lastNameResult.message.text;
+
+  // Address
+  await ctx.reply(lang === 'en' ? '📍 Please enter your delivery address:' : '📍 እባክዎ የማድረሻ አድራሻዎን ያስገቡ:');
+  const addressResult = await conversation.waitFor(':text');
+  if (!addressResult.message?.text) {
+    await ctx.reply(lang === 'en' ? '❌ Please enter your address.' : '❌ እባክዎ አድራሻዎን ያስገቡ።');
+    return;
+  }
+  ctx.session.data.address = addressResult.message.text;
+
+  // Additional Contact
+  await ctx.reply(lang === 'en' ? '📞 Additional contact (optional):' : '📞 ተጨማሪ የመገኛ መረጃ (አማራጭ):', {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '📱 ' + (lang === 'en' ? 'Add Contact' : 'ጨምር'), callback_data: 'add_contact' }],
+        [{ text: '⏭️ ' + (lang === 'en' ? 'Skip' : 'ዝለል'), callback_data: 'skip_contact' }],
+      ],
+    },
+  });
+
+  const contactChoice = await conversation.waitForCallbackQuery(['add_contact', 'skip_contact']);
+  await contactChoice.answerCallbackQuery();
+
+  if (contactChoice.callbackQuery.data === 'add_contact') {
+    await ctx.reply(lang === 'en' ? '📞 Enter contact name and phone:' : '📞 የመገኛ ሰው ስም እና ስልክ ያስገቡ:');
+    const contactResult = await conversation.waitFor(':text');
+    if (contactResult.message?.text) {
+      ctx.session.data.additionalContact = contactResult.message.text;
+    }
+  }
+
+  // Terms
+  await ctx.reply(lang === 'en' ? '📄 Please accept the Terms & Conditions:' : '📄 እባክዎ ውሎችና ሁኔታዎቹን ይቀበሉ:', {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '✅ ' + (lang === 'en' ? 'I Accept' : 'ተቀብያለሁ'), callback_data: 'accept_terms' }],
+        [{ text: '❌ ' + (lang === 'en' ? 'Decline' : 'አልቀበልም'), callback_data: 'decline_terms' }],
+      ],
+    },
+  });
+
+  const termsChoice = await conversation.waitForCallbackQuery(['accept_terms', 'decline_terms']);
+  await termsChoice.answerCallbackQuery();
+
+  if (termsChoice.callbackQuery.data === 'decline_terms') {
+    await ctx.reply(lang === 'en' ? '❌ Registration cancelled.' : '❌ ምዝገባ ተሰርዟል።');
+    return;
+  }
+
+  ctx.session.data.termsAccepted = true;
+
+  // Submit Registration
+  await ctx.reply('⏳ Creating your account...');
+
+  try {
+    const data = await apiCall(
+      '/api/v1/customers/register',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          telegramId: ctx.from?.id?.toString(),
+          username: ctx.from?.username || '',
+          firstName: ctx.session.data.firstName,
+          lastName: ctx.session.data.lastName || '',
+          phone: ctx.session.data.phone || '',
+          fullName: `${ctx.session.data.firstName} ${ctx.session.data.lastName || ''}`.trim(),
+          deliveryAddress: ctx.session.data.address || '',
+          additionalContact: ctx.session.data.additionalContact || '',
+          language: ctx.session.language || 'en',
+          termsAccepted: true,
+        }),
+      },
+      ctx
+    );
+
+    if (data.success) {
+      ctx.session.isRegistered = true;
+      ctx.session.customerId = data.data.customer?.id || data.data.user?.id;
+      
+      await ctx.reply(
+        lang === 'en' ? '🎉 Registration Complete!' : '🎉 ምዝገባ ተጠናቀቀ!',
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '🏠 ' + (lang === 'en' ? 'Go to Dashboard' : 'ወደ ዳሽቦርድ ይሂዱ'), callback_data: 'show_menu' }],
+            ],
+          },
+        }
+      );
+    } else {
+      await ctx.reply(lang === 'en' ? '❌ Registration failed. Please try again.' : '❌ ምዝገባ አልተሳካም። እባክዎ እንደገና ይሞክሩ።');
+    }
+  } catch (error) {
+    await ctx.reply(lang === 'en' ? '❌ Network error. Please try again.' : '❌ የአውታረ መረብ ችግር። እባክዎ እንደገና ይሞክሩ።');
+  }
+}
+
+// ============================================================
+// REGISTER CONVERSATION - MUST BE AFTER DEFINITION
+// ============================================================
+
+bot.use(createConversation(registrationConversation, 'registration'));
+
+// ============================================================
+// MAIN COMMANDS
+// ============================================================
+
+bot.command('start', async (ctx) => {
+  const isRegistered = await checkUserRegistration(ctx);
+  
+  if (isRegistered && ctx.session.customerId) {
+    await ctx.reply(
+      `👋 ${t(ctx, 'existingCustomer')}\n\n${t(ctx, 'mainMenu')}`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🏠 ' + t(ctx, 'mainMenu'), callback_data: 'show_menu' }],
+            [{ text: '🥩 ' + (ctx.session.language === 'en' ? 'Available Kircha' : 'ያሉ የቅርጫ ቡድኖች'), callback_data: 'menu_groups' }],
+          ],
+        },
+      }
+    );
+    return;
+  }
+
+  await ctx.reply(
+    `${t(ctx, 'welcome')}\n\n${t(ctx, 'chooseLanguage')}`,
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🇬🇧 English', callback_data: 'lang_en' }],
+          [{ text: '🇪🇹 አማርኛ', callback_data: 'lang_am' }],
+        ],
+      },
+    }
+  );
+});
+
+// ============================================================
+// LANGUAGE SELECTION
+// ============================================================
+
+bot.callbackQuery(/lang_(en|am)/, async (ctx) => {
+  const lang = ctx.match[1] as 'en' | 'am';
+  await ctx.answerCallbackQuery();
+  ctx.session.language = lang;
+
+  await ctx.reply(
+    `${t(ctx, 'languageSet')}\n\n${t(ctx, 'phoneRequest')}`,
+    {
+      reply_markup: {
+        keyboard: [[{ text: '📱 ' + (lang === 'en' ? 'Share Phone Number' : 'ስልክ ቁጥር ያጋሩ'), request_contact: true }]],
+        resize_keyboard: true,
+        one_time_keyboard: true,
+      },
+    }
+  );
+});
+
+// ============================================================
+// PHONE NUMBER HANDLER
+// ============================================================
+
+bot.on('message:contact', async (ctx) => {
+  const contact = ctx.message.contact;
+  if (!contact) return;
+
+  if (contact.user_id !== ctx.from?.id) {
+    await ctx.reply('⚠️ Please share your own phone number.');
+    return;
+  }
+
+  ctx.session.data.phone = contact.phone_number;
+  ctx.session.phoneNumber = contact.phone_number;
+
+  const lang = ctx.session.language || 'en';
+  
+  await ctx.reply(
+    lang === 'en' 
+      ? '✅ Phone number received!\n\nNow, please enter your first name:' 
+      : '✅ ስልክ ቁጥር ተቀብለናል!\n\nእባክዎ የመጀመሪያ ስምዎን ያስገቡ:',
+    {
+      reply_markup: { remove_keyboard: true },
+    }
+  );
+
+  await ctx.conversation.enter('registration');
+});
+
+// ============================================================
+// MENU HANDLERS
+// ============================================================
+
+bot.callbackQuery('show_menu', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const lang = ctx.session.language || 'en';
+  await ctx.reply(
+    `📋 *${t(ctx, 'mainMenu')}*\n\nSelect an option:`,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🥩 ' + (lang === 'en' ? 'Available Kircha' : 'ያሉ የቅርጫ ቡድኖች'), callback_data: 'menu_groups' }],
+          [{ text: '📦 ' + (lang === 'en' ? 'My Orders' : 'ትዕዛዞቼ'), callback_data: 'menu_orders' }],
+          [{ text: '👤 ' + (lang === 'en' ? 'My Profile' : 'መገለጫዬ'), callback_data: 'menu_profile' }],
+          [{ text: '↩️ ' + (lang === 'en' ? 'Refunds' : 'ተመላሽ'), callback_data: 'menu_refunds' }],
+          [{ text: '❓ ' + (lang === 'en' ? 'Help' : 'እገዛ'), callback_data: 'menu_help' }],
+          [{ text: '⚙️ ' + (lang === 'en' ? 'Settings' : 'ቅንብሮች'), callback_data: 'menu_settings' }],
+        ],
+      },
+    }
+  );
+});
+
+// Placeholder menu handlers
+bot.callbackQuery('menu_groups', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply('🥩 *Available Kircha*\n\nNo groups available.', { parse_mode: 'Markdown' });
+});
+
+bot.callbackQuery('menu_orders', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply('📦 *My Orders*\n\nNo orders found.', { parse_mode: 'Markdown' });
+});
+
+bot.callbackQuery('menu_profile', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply('👤 *Profile*\n\nFeature coming soon.', { parse_mode: 'Markdown' });
+});
+
+bot.callbackQuery('menu_refunds', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply('↩️ *Refunds*\n\nNo refund requests.', { parse_mode: 'Markdown' });
+});
+
+bot.callbackQuery('menu_help', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply('❓ *Help*\n\nContact support for assistance.', { parse_mode: 'Markdown' });
+});
+
+bot.callbackQuery('menu_settings', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply('⚙️ *Settings*\n\nFeature coming soon.', { parse_mode: 'Markdown' });
+});
+
+// ============================================================
+// ERROR HANDLER
+// ============================================================
+
+bot.catch((error) => {
+  console.error('❌ Bot error:', error);
+});
+
+// ============================================================
+// START BOT
+// ============================================================
+
+console.log('🤖 Customer Bot is running...');
+console.log(`📊 API URL: ${API_URL}`);
+
+bot.start({
+  allowed_updates: ['message', 'callback_query'],
+});
+
+// ============================================================
+// HEALTH CHECK SERVER
+// ============================================================
+
+http.createServer((req, res) => {
+  if (req.url === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      status: 'ok',
+      service: 'customer-bot',
+      port: PORT,
+      timestamp: new Date().toISOString()
+    }));
+  } else {
+    res.writeHead(404);
+    res.end('Not Found');
+  }
+}).listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ Health check: http://localhost:${PORT}/health`);
+});
+
+console.log(`🔗 Health check: http://localhost:${PORT}/health`);

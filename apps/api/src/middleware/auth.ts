@@ -4,15 +4,15 @@ import prisma from '../lib/prisma.js';
 
 async function isUserBanned(telegramId: string): Promise<boolean> {
   const ban = await prisma.bannedUser.findUnique({
-    where: { telegramId }
+    where: { telegramId: telegramId }
   });
 
   if (!ban || !ban.active) return false;
   if (ban.expiresAt && ban.expiresAt < new Date()) {
     // Ban expired
     await prisma.bannedUser.update({
-      where: { telegramId },
-      data: { active: false }
+      where: { telegramId: telegramId },
+      data: { isActive: false }
     });
     return false;
   }

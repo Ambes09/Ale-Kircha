@@ -5,7 +5,7 @@ import { NotFoundError, ConflictError } from '../errors/index.js';
 export class KirchaTypeController {
   async getAllTypes(request: FastifyRequest, reply: FastifyReply) {
     const types = await prisma.kirchaType.findMany({
-      where: { active: true },
+      where: { isActive: true },
       orderBy: { displayOrder: 'asc' }
     });
     return reply.send({ success: true, data: types });
@@ -26,14 +26,14 @@ export class KirchaTypeController {
     const type = await prisma.kirchaType.create({
       data: {
         code: body.code,
-        nameEn: body.nameEn,
+        name: body.nameEn,
         nameAm: body.nameAm,
         descriptionEn: body.descriptionEn,
         descriptionAm: body.descriptionAm,
         imageUrl: body.imageUrl,
         icon: body.icon,
         displayOrder: body.displayOrder || 0,
-        active: body.active !== undefined ? body.active : true
+        isActive: body.active !== undefined ? body.active : true
       }
     });
     return reply.status(201).send({ success: true, data: type });

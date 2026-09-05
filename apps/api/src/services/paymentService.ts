@@ -3,7 +3,7 @@ import prisma from '../lib/prisma.js';
 export class PaymentService {
   async getPaymentMethods() {
     return prisma.paymentMethod.findMany({
-      where: { active: true },
+      where: { isActive: true },
       orderBy: { displayOrder: 'asc' }
     });
   }

@@ -1,0 +1,184 @@
+import Fastify from 'fastify';
+import cors from '@fastify/cors';
+import helmet from '@fastify/helmet';
+import { Client } from 'pg';
+
+const fastify = Fastify({ logger: true });
+
+// Database client
+const db = new Client({
+  connectionString: process.env.DATABASE_URL || 'postgresql://localhost:5432/ale_kircha',
+});
+
+// Connect to database
+db.connect().then(() => {
+  console.log('✅ PostgreSQL connected');
+}).catch(err => {
+  console.error('❌ Database connection failed:', err.message);
+  process.exit(1);
+});
+
+// Plugins
+fastify.register(cors, { origin: true });
+fastify.register(helmet);
+
+// Health check
+fastify.get('/health', async () => {
+
+// API Version
+fastify.get("/api/v1/health", async () => {
+  return {
+    status: "ok",
+    service: "ale-kircha-api",
+    version: "1.0.0",
+    timestamp: new Date().toISOString(),
+  };
+});
+
+// API Version
+fastify.get("/api/v1/health", async () => {
+
+// API Version
+fastify.get("/api/v1/health", async () => {
+  return {
+    status: "ok",
+    service: "ale-kircha-api",
+    version: "1.0.0",
+    timestamp: new Date().toISOString(),
+  };
+});
+  return {
+    status: "ok",
+    service: "ale-kircha-api",
+    version: "1.0.0",
+    timestamp: new Date().toISOString(),
+  };
+});
+  try {
+    await db.query('SELECT 1');
+    return { status: 'ok', database: 'connected' };
+  } catch {
+    return { status: 'error', database: 'disconnected' };
+  }
+});
+
+// ============================================================
+// CUSTOMER REGISTRATION - FIXED with gen_random_uuid()
+// ============================================================
+
+fastify.post('/api/v1/customers/register', async (request, reply) => {
+  const { telegramId, phoneNumber, firstName, lastName } = request.body as any;
+
+  try {
+    console.log('📝 Registering:', { telegramId, firstName, lastName, phoneNumber });
+
+    // Check if user exists
+    const existing = await db.query(
+      'SELECT * FROM "User" WHERE "telegramId" = $1',
+      [String(telegramId)]
+    );
+
+    if (existing.rows.length > 0) {
+      return {
+        success: true,
+        data: { user: existing.rows[0], status: 'EXISTING' }
+      };
+    }
+
+    // Create new user - FIXED: Generate ID with gen_random_uuid()
+    const result = await db.query(
+      `INSERT INTO "User" (id, "telegramId", "firstName", "lastName", "phone", "role", "createdAt", "updatedAt")
+       VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, NOW(), NOW())
+       RETURNING *`,
+      [String(telegramId), firstName || 'User', lastName || '', phoneNumber || '', 'CUSTOMER']
+    );
+
+    const user = result.rows[0];
+    console.log('✅ User created:', user.id);
+
+    // Create customer record - FIXED: Generate ID with gen_random_uuid()
+    const customerResult = await db.query(
+      `INSERT INTO "Customer" (id, "userId", "fullName", "additionalPhone", "preferredLanguage", "registrationDate", "status")
+       VALUES (gen_random_uuid()::text, $1, $2, $3, 'en', NOW(), 'ACTIVE')
+       RETURNING *`,
+      [user.id, firstName + ' ' + (lastName || ''), '']
+    );
+
+    console.log('✅ Customer created:', customerResult.rows[0].id);
+
+    return {
+      success: true,
+      data: {
+        user: user,
+        customer: customerResult.rows[0],
+        status: 'CREATED'
+      }
+    };
+  } catch (error: any) {
+    console.error('❌ Registration error:', error.message);
+    console.error('Stack:', error.stack);
+    return reply.status(500).send({
+      success: false,
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: error.message
+      }
+    });
+  }
+});
+
+// ============================================================
+// ADMIN STATS
+// ============================================================
+
+fastify.get('/api/v1/admin/stats', async () => {
+  try {
+    const [users, customers, orders, groups] = await Promise.all([
+      db.query('SELECT COUNT(*) FROM "User"'),
+      db.query('SELECT COUNT(*) FROM "Customer"'),
+      db.query('SELECT COUNT(*) FROM "Order"'),
+      db.query('SELECT COUNT(*) FROM "KirchaGroup"'),
+    ]);
+
+    return {
+      success: true,
+      data: {
+        users: parseInt(users.rows[0].count),
+        customers: parseInt(customers.rows[0].count),
+        orders: parseInt(orders.rows[0].count),
+        groups: parseInt(groups.rows[0].count),
+      }
+    };
+  } catch (error: any) {
+    console.error('❌ Stats error:', error.message);
+    return {
+      success: false,
+      error: { code: 'STATS_ERROR', message: error.message }
+    };
+  }
+});
+
+// ============================================================
+// DEBUG - List Users
+// ============================================================
+
+fastify.get('/api/v1/debug/users', async () => {
+  const result = await db.query('SELECT id, "telegramId", "firstName", "lastName", phone FROM "User" LIMIT 10');
+  return { success: true, data: result.rows };
+});
+
+// ============================================================
+// START SERVER
+// ============================================================
+
+const start = async () => {
+  const port = Number(process.env.PORT) || 4000;
+  const host = process.env.HOST || '0.0.0.0';
+
+  await fastify.listen({ port, host });
+  console.log(`🚀 API running on ${host}:${port}`);
+  console.log(`📊 Health: http://${host}:${port}/health`);
+  console.log(`👤 Register: POST http://${host}:${port}/api/v1/customers/register`);
+};
+
+start();

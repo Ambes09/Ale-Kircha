@@ -44,7 +44,7 @@ export class KirchaService {
         throw new ConflictError('Group is not open');
       }
 
-      const available = group.totalCapacity - group.reservedQuantity - group.soldQuantity;
+      const available = group.maxQuota - group.reservedQuota - group.soldQuota;
       if (quantity > available) {
         throw new ConflictError('Not enough capacity available');
       }
@@ -59,9 +59,9 @@ export class KirchaService {
           subtotal: group.unitPrice * quantity,
           discount: 0,
           deliveryFee: group.deliveryFee,
-          additionalFees: group.additionalFees,
+          additionalFee: group.additionalFee,
           tax: group.tax,
-          totalAmount: (group.unitPrice * quantity) + group.deliveryFee + group.additionalFees - 0 + group.tax,
+          totalAmount: (group.unitPrice * quantity) + group.deliveryFee + group.additionalFee - 0 + group.tax,
           reservationStatus: 'RESERVED'
         }
       });
@@ -69,7 +69,7 @@ export class KirchaService {
       await tx.kirchaGroup.update({
         where: { id: groupId },
         data: {
-          reservedQuantity: group.reservedQuantity + quantity
+          reservedQuota: group.reservedQuota + quantity
         }
       });
 

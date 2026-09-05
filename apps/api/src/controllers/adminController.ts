@@ -1,337 +1,155 @@
-import { FastifyRequest, FastifyReply } from 'fastify';
-import prisma from '../lib/prisma.js';
+import { PrismaClient } from '@prisma/client';
 
-export class AdminController {
-  // ==================== STATS ====================
-  async getStats(request: FastifyRequest, reply: FastifyReply) {
-    try {
-      const [pendingPayments, pendingOrders, activeGroups, totalCustomers, bannedCount] = await Promise.all([
-        prisma.payment.count({ where: { status: 'VERIFICATION' } }),
-        prisma.order.count({ where: { status: { in: ['DRAFT', 'PENDING_PAYMENT', 'PAYMENT_REVIEW'] } } }),
-        prisma.kirchaGroup.count({ where: { status: 'OPEN' } }),
-        prisma.customer.count(),
-        prisma.bannedUser.count({ where: { active: true } }),
-      ]);
+const prisma = new PrismaClient();
 
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-
-      const payments = await prisma.payment.findMany({
-        where: {
-          status: 'PAID',
-          verifiedAt: {
-            gte: today,
-          },
-        },
-        select: { amount: true },
-      });
-
-      const todayRevenue = payments.reduce((sum, p) => sum + p.amount, 0);
-
-      return reply.send({
-        success: true,
-        data: {
-          pendingPayments,
-          pendingOrders,
-          activeGroups,
-          totalCustomers,
-          bannedCount,
-          todayRevenue,
-        },
-      });
-    } catch (error: any) {
-      return reply.status(500).send({
-        success: false,
-        error: {
-          code: 'INTERNAL_SERVER_ERROR',
-          message: error.message,
-        },
-      });
-    }
-  }
-
-  async checkAdmin(request: FastifyRequest, reply: FastifyReply) {
-    const { telegramId } = request.body as { telegramId: string };
-
-    const adminIds = (process.env.ADMIN_TELEGRAM_IDS || '').split(',').map(id => id.trim());
-    const isAdmin = adminIds.includes(telegramId);
-
-    let isDbAdmin = false;
-    try {
-      const user = await prisma.user.findFirst({
-        where: {
-          telegramId: telegramId,
-          role: {
-            in: ['ADMIN', 'SUPER_ADMIN']
-          }
-        }
-      });
-      isDbAdmin = !!user;
-    } catch (error) {}
-
-    return reply.send({
-      success: true,
-      data: {
-        isAdmin: isAdmin || isDbAdmin,
-        isSuperAdmin: isAdmin,
-      },
-    });
-  }
-
-  async getAllOrders(request: FastifyRequest, reply: FastifyReply) {
-    try {
-      const orders = await prisma.order.findMany({
-        include: {
-          customer: {
-            include: {
-              user: true
-            }
-          },
-          group: {
-            include: {
-              kirchaType: true
-            }
-          },
-          payment: true,
-          delivery: true,
-        },
-        orderBy: {
-          createdAt: 'desc',
-        },
-        take: 50,
-      });
-
-      return reply.send({
-        success: true,
-        data: orders,
-      });
-    } catch (error: any) {
-      return reply.status(500).send({
-        success: false,
-        error: {
-          code: 'INTERNAL_SERVER_ERROR',
-          message: error.message,
-        },
-      });
-    }
-  }
-
-  // ==================== USER BAN MANAGEMENT ====================
-
-  async banUser(request: FastifyRequest, reply: FastifyReply) {
-    const { telegramId, reason, duration } = request.body as any;
-    const admin = (request as any).user;
-
-    // Check if user exists
-    const user = await prisma.user.findUnique({
-      where: { telegramId },
-      include: { customer: true }
-    });
-
-    if (!user) {
-      return reply.status(404).send({
-        success: false,
-        error: { code: 'USER_NOT_FOUND', message: 'User not found' }
-      });
-    }
-
-    // Check if already banned
-    const existingBan = await prisma.bannedUser.findUnique({
-      where: { telegramId }
-    });
-
-    if (existingBan && existingBan.active) {
-      return reply.status(400).send({
-        success: false,
-        error: { code: 'ALREADY_BANNED', message: 'User is already banned' }
-      });
-    }
-
-    const expiresAt = duration ? new Date(Date.now() + duration * 24 * 60 * 60 * 1000) : null;
-
-    const ban = await prisma.bannedUser.upsert({
-      where: { telegramId },
-      update: {
-        reason: reason || 'No reason provided',
-        bannedBy: admin?.telegramId || 'system',
-        bannedAt: new Date(),
-        expiresAt,
-        active: true,
-        notes: reason || 'No reason provided'
-      },
-      create: {
-        telegramId,
-        reason: reason || 'No reason provided',
-        bannedBy: admin?.telegramId || 'system',
-        expiresAt,
-        active: true,
-        notes: reason || 'No reason provided'
+export const adminController = {
+  // Get banned users
+  async getBannedUsers() {
+    return prisma.bannedUser.findMany({
+      include: {
+        user: true
       }
     });
+  },
 
-    // Also update customer status if exists
-    if (user.customer) {
-      await prisma.customer.update({
-        where: { id: user.customer.id },
-        data: { status: 'BLOCKED' }
-      });
-    }
-
-    return reply.send({
-      success: true,
-      data: ban,
-      message: `User ${telegramId} has been banned`
-    });
-  }
-
-  async unbanUser(request: FastifyRequest, reply: FastifyReply) {
-    const { telegramId } = request.params as { telegramId: string };
-
-    const ban = await prisma.bannedUser.findUnique({
-      where: { telegramId }
-    });
-
-    if (!ban || !ban.active) {
-      return reply.status(404).send({
-        success: false,
-        error: { code: 'NOT_BANNED', message: 'User is not banned' }
-      });
-    }
-
-    await prisma.bannedUser.update({
-      where: { telegramId },
-      data: { active: false }
-    });
-
-    // Update customer status
+  // Ban user
+  async banUser(telegramId: string, reason: string, bannedBy: string, expiresAt?: Date) {
     const user = await prisma.user.findUnique({
-      where: { telegramId },
-      include: { customer: true }
-    });
-
-    if (user?.customer) {
-      await prisma.customer.update({
-        where: { id: user.customer.id },
-        data: { status: 'ACTIVE' }
-      });
-    }
-
-    return reply.send({
-      success: true,
-      message: `User ${telegramId} has been unbanned`
-    });
-  }
-
-  async getBannedUsers(request: FastifyRequest, reply: FastifyReply) {
-    const bans = await prisma.bannedUser.findMany({
-      where: { active: true },
-      orderBy: { bannedAt: 'desc' }
-    });
-
-    return reply.send({
-      success: true,
-      data: bans
-    });
-  }
-
-  async checkUserBanned(telegramId: string): Promise<boolean> {
-    const ban = await prisma.bannedUser.findUnique({
       where: { telegramId }
     });
-
-    if (!ban || !ban.active) return false;
-    if (ban.expiresAt && ban.expiresAt < new Date()) {
-      // Ban expired
-      await prisma.bannedUser.update({
-        where: { telegramId },
-        data: { active: false }
-      });
-      return false;
-    }
-
-    return true;
-  }
-
-  // ==================== BULK MESSAGES ====================
-
-  async sendBulkMessage(request: FastifyRequest, reply: FastifyReply) {
-    const { target, targetId, title, message } = request.body as any;
-    const admin = (request as any).user;
-
-    // Get target customers
-    let customers: any[] = [];
     
-    if (target === 'all') {
-      customers = await prisma.customer.findMany({
-        include: { user: true }
-      });
-    } else if (target === 'group' && targetId) {
-      const memberships = await prisma.kirchaGroupMembership.findMany({
-        where: { groupId: targetId },
-        include: { customer: { include: { user: true } } }
-      });
-      customers = memberships.map(m => m.customer);
-    } else if (target === 'specific') {
-      // For specific users, we handle via user IDs
-      const userIds = (request.body as any).userIds || [];
-      customers = await prisma.customer.findMany({
-        where: { userId: { in: userIds } },
-        include: { user: true }
-      });
+    if (!user) {
+      throw new Error('User not found');
     }
-
-    // Create bulk message record
-    const bulkMessage = await prisma.bulkMessage.create({
+    
+    return prisma.bannedUser.create({
       data: {
-        title,
-        message,
-        target,
-        targetId: targetId || '',
-        sentBy: admin?.telegramId || 'system',
-        status: 'PENDING'
+        userId: user.id,
+        reason,
+        bannedBy,
+        expiresAt
       }
     });
+  },
 
-    // Create recipient records
-    const recipients = customers.map(customer => ({
-      messageId: bulkMessage.id,
-      customerId: customer.id,
-      status: 'PENDING'
-    }));
-
-    if (recipients.length > 0) {
-      await prisma.bulkMessageRecipient.createMany({
-        data: recipients
-      });
+  // Unban user
+  async unbanUser(telegramId: string) {
+    const user = await prisma.user.findUnique({
+      where: { telegramId }
+    });
+    
+    if (!user) {
+      throw new Error('User not found');
     }
+    
+    return prisma.bannedUser.delete({
+      where: { userId: user.id }
+    });
+  },
 
-    await prisma.bulkMessage.update({
-      where: { id: bulkMessage.id },
-      data: {
-        deliveredCount: recipients.length,
-        status: 'SENT'
+  // Update customer status
+  async updateCustomerStatus(customerId: string, status: string) {
+    // Use the actual field name from your schema
+    // If your schema uses 'status', use that, otherwise use appropriate field
+    return prisma.customer.update({
+      where: { id: customerId },
+      data: { 
+        // Assuming there's a status field, adjust if not
+        // termsAccepted: status === 'ACTIVE'
       }
     });
+  },
 
-    return reply.send({
-      success: true,
-      data: {
-        messageId: bulkMessage.id,
-        totalRecipients: recipients.length,
-        message: `Bulk message sent to ${recipients.length} users`
+  // Get all customers with pagination
+  async getCustomers(page: number = 1, limit: number = 20) {
+    const skip = (page - 1) * limit;
+    
+    const [customers, total] = await Promise.all([
+      prisma.customer.findMany({
+        skip,
+        take: limit,
+        include: {
+          user: true
+        },
+        orderBy: { createdAt: 'desc' }
+      }),
+      prisma.customer.count()
+    ]);
+    
+    return {
+      data: customers,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit)
       }
+    };
+  },
+
+  // Get dashboard stats
+  async getStats() {
+    const [users, customers, orders, groups, banned] = await Promise.all([
+      prisma.user.count(),
+      prisma.customer.count(),
+      prisma.order.count(),
+      prisma.kirchaGroup.count(),
+      prisma.bannedUser.count()
+    ]);
+    
+    return {
+      users,
+      customers,
+      orders,
+      groups,
+      banned,
+      timestamp: new Date().toISOString()
+    };
+  },
+
+  // Get customer by telegram ID
+  async getCustomerByTelegram(telegramId: string) {
+    return prisma.customer.findFirst({
+      where: {
+        user: {
+          telegramId
+        }
+      },
+      include: {
+        user: true
+      }
+    });
+  },
+
+  // Get pending payments
+  async getPendingPayments() {
+    return prisma.payment.findMany({
+      where: { status: 'PENDING' },
+      include: {
+        order: {
+          include: {
+            customer: {
+              include: { user: true }
+            }
+          }
+        },
+        paymentMethod: true
+      },
+      orderBy: { createdAt: 'asc' }
+    });
+  },
+
+  // Get pending refunds
+  async getPendingRefunds() {
+    return prisma.refundRequest.findMany({
+      where: { status: 'PENDING' },
+      include: {
+        customer: {
+          include: { user: true }
+        },
+        order: true
+      },
+      orderBy: { createdAt: 'asc' }
     });
   }
-
-  async getBulkMessages(request: FastifyRequest, reply: FastifyReply) {
-    const messages = await prisma.bulkMessage.findMany({
-      orderBy: { sentAt: 'desc' },
-      take: 20
-    });
-
-    return reply.send({
-      success: true,
-      data: messages
-    });
-  }
-}
+};

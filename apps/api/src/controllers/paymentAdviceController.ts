@@ -30,7 +30,7 @@ export class PaymentAdviceController {
     const advice = await prisma.paymentAdvice.create({
       data: {
         paymentId,
-        customerId: user.customerId,
+        customer: { connect: { id: user.customerId } },
         storageKey: key,
         url: url,
         mimeType: file.mimetype,
@@ -43,14 +43,14 @@ export class PaymentAdviceController {
     // Update payment status
     await prisma.payment.update({
       where: { id: paymentId },
-      data: { status: 'VERIFICATION', adviceSubmittedAt: new Date() }
+      data: { status: 'UNDER_REVIEW', adviceSubmittedAt: new Date() }
     });
 
     // Update order status
     if (orderId) {
       await prisma.order.update({
         where: { id: orderId },
-        data: { status: 'PAYMENT_REVIEW' }
+        data: { status: 'PAYMENT_UNDER_REVIEW' }
       });
     }
 

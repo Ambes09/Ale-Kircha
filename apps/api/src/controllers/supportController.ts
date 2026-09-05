@@ -18,7 +18,7 @@ export class SupportController {
         customerId: customer.id,
         category: body.category || 'GENERAL',
         message: body.message,
-        orderId: body.orderId,
+        order: { connect: { id: body.orderId } },
         status: 'OPEN'
       }
     });

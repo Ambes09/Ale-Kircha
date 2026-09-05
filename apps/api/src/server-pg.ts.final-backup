@@ -1,0 +1,1625 @@
+import Fastify from 'fastify';
+import cors from '@fastify/cors';
+import helmet from '@fastify/helmet';
+import { Client } from 'pg';
+
+const fastify = Fastify({ logger: true });
+
+// Database client
+const db = new Client({
+  connectionString: process.env.DATABASE_URL || 'postgresql://localhost:5432/ale_kircha',
+});
+
+// Connect to database
+db.connect().then(() => {
+  console.log('✅ PostgreSQL connected');
+}).catch((err: any) => {
+  console.error('❌ Database connection failed:', err.message);
+  process.exit(1);
+});
+
+// Register plugins
+fastify.register(cors, { origin: true });
+fastify.register(helmet);
+
+// ============================================================
+// HEALTH CHECK
+// ============================================================
+
+fastify.get('/health', async () => {
+  try {
+    await db.query('SELECT 1');
+    return { status: 'ok', database: 'connected', service: 'ale-kircha-api' };
+  } catch {
+    return { status: 'error', database: 'disconnected' };
+  }
+});
+
+// ============================================================
+// ADMIN DASHBOARD STATS
+// ============================================================
+
+fastify.get('/api/v1/admin/stats', async () => {
+  try {
+    const users = await db.query('SELECT COUNT(*) FROM "User"');
+    const customers = await db.query('SELECT COUNT(*) FROM "Customer"');
+    const groups = await db.query('SELECT COUNT(*) FROM "Groups"');
+    const orders = await db.query('SELECT COUNT(*) FROM "Orders"');
+    const payments = await db.query('SELECT COUNT(*) FROM "Payments" WHERE status = $1', ['PENDING']);
+    const revenue = await db.query('SELECT COALESCE(SUM("totalAmount"), 0) FROM "Orders" WHERE "orderStatus" = $1', ['COMPLETED']);
+    
+    return {
+      success: true,
+      data: {
+        users: parseInt(users.rows[0].count),
+        customers: parseInt(customers.rows[0].count),
+        groups: parseInt(groups.rows[0].count),
+        orders: parseInt(orders.rows[0].count),
+        payments: parseInt(payments.rows[0].count),
+        revenue: parseFloat(revenue.rows[0].coalesce)
+      }
+    };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// CUSTOMERS
+// ============================================================
+
+fastify.get('/api/v1/customers', async () => {
+  try {
+    const result = await db.query(`
+      SELECT c.*, u.phone, u."telegramId", u.username 
+      FROM "Customer" c 
+      JOIN "User" u ON c."userId" = u.id 
+      ORDER BY c."createdAt" DESC
+      LIMIT 20
+    `);
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// GROUPS
+// ============================================================
+
+fastify.get('/api/v1/kircha/groups', async () => {
+  try {
+    const result = await db.query(`
+      SELECT g.*, k."nameEn" as "kirchaTypeName" 
+      FROM "Groups" g 
+      LEFT JOIN "KirchaTypes" k ON g."kirchaTypeId" = k.id 
+      ORDER BY g."createdAt" DESC
+      LIMIT 20
+    `);
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// ORDERS
+// ============================================================
+
+fastify.get('/api/v1/orders', async () => {
+  try {
+    const result = await db.query(`
+      SELECT o.*, c."fullName" as "customerName" 
+      FROM "Orders" o 
+      JOIN "Customer" c ON o."customerId" = c.id 
+      ORDER BY o."createdAt" DESC
+      LIMIT 20
+    `);
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// PAYMENTS
+// ============================================================
+
+fastify.get('/api/v1/payments', async () => {
+  try {
+    const result = await db.query(`
+      SELECT p.*, c."fullName" as "customerName" 
+      FROM "Payments" p 
+      JOIN "Customer" c ON p."customerId" = c.id 
+      ORDER BY p."createdAt" DESC
+      LIMIT 20
+    `);
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// REFUNDS
+// ============================================================
+
+fastify.get('/api/v1/refunds', async () => {
+  try {
+    const result = await db.query(`
+      SELECT r.*, c."fullName" as "customerName" 
+      FROM "Refunds" r 
+      JOIN "Customer" c ON r."customerId" = c.id 
+      ORDER BY r."createdAt" DESC
+      LIMIT 20
+    `);
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// DELIVERIES
+// ============================================================
+
+fastify.get('/api/v1/deliveries', async () => {
+  try {
+    const result = await db.query(`
+      SELECT d.*, o."orderNumber", c."fullName" as "customerName" 
+      FROM "Deliveries" d 
+      JOIN "Orders" o ON d."orderId" = o.id 
+      JOIN "Customer" c ON o."customerId" = c.id 
+      ORDER BY d."createdAt" DESC
+      LIMIT 20
+    `);
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// REPORTS
+// ============================================================
+
+fastify.get('/api/v1/admin/reports/sales', async () => {
+  try {
+    const total = await db.query('SELECT COALESCE(SUM("totalAmount"), 0) FROM "Orders" WHERE "orderStatus" = $1', ['COMPLETED']);
+    const count = await db.query('SELECT COUNT(*) FROM "Orders" WHERE "orderStatus" = $1', ['COMPLETED']);
+    return {
+      success: true,
+      data: {
+        'Total Revenue': parseFloat(total.rows[0].coalesce).toFixed(2),
+        'Orders Completed': parseInt(count.rows[0].count)
+      }
+    };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.get('/api/v1/admin/reports/orders', async () => {
+  try {
+    const pending = await db.query('SELECT COUNT(*) FROM "Orders" WHERE "orderStatus" = $1', ['PENDING_PAYMENT']);
+    const completed = await db.query('SELECT COUNT(*) FROM "Orders" WHERE "orderStatus" = $1', ['COMPLETED']);
+    return {
+      success: true,
+      data: {
+        'Pending': parseInt(pending.rows[0].count),
+        'Completed': parseInt(completed.rows[0].count)
+      }
+    };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.get('/api/v1/admin/reports/payments', async () => {
+  try {
+    const pending = await db.query('SELECT COUNT(*) FROM "Payments" WHERE status = $1', ['PENDING']);
+    const verified = await db.query('SELECT COUNT(*) FROM "Payments" WHERE status = $1', ['VERIFIED']);
+    return {
+      success: true,
+      data: {
+        'Pending': parseInt(pending.rows[0].count),
+        'Verified': parseInt(verified.rows[0].count)
+      }
+    };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.get('/api/v1/admin/reports/customers', async () => {
+  try {
+    const total = await db.query('SELECT COUNT(*) FROM "Customer"');
+    const active = await db.query('SELECT COUNT(*) FROM "Customer" WHERE status = $1', ['ACTIVE']);
+    return {
+      success: true,
+      data: {
+        'Total': parseInt(total.rows[0].count),
+        'Active': parseInt(active.rows[0].count)
+      }
+    };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.get('/api/v1/admin/reports/groups', async () => {
+  try {
+    const open = await db.query('SELECT COUNT(*) FROM "Groups" WHERE status = $1', ['OPEN']);
+    const full = await db.query('SELECT COUNT(*) FROM "Groups" WHERE status = $1', ['FULL']);
+    return {
+      success: true,
+      data: {
+        'Open': parseInt(open.rows[0].count),
+        'Full': parseInt(full.rows[0].count)
+      }
+    };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.get('/api/v1/admin/reports/delivery', async () => {
+  try {
+    const pending = await db.query('SELECT COUNT(*) FROM "Deliveries" WHERE status = $1', ['PENDING']);
+    const delivered = await db.query('SELECT COUNT(*) FROM "Deliveries" WHERE status = $1', ['DELIVERED']);
+    return {
+      success: true,
+      data: {
+        'Pending': parseInt(pending.rows[0].count),
+        'Delivered': parseInt(delivered.rows[0].count)
+      }
+    };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// SETTINGS
+// ============================================================
+
+fastify.get('/api/v1/settings', async () => {
+  try {
+    const result = await db.query('SELECT * FROM "SystemSettings" ORDER BY key');
+    const settings: Record<string, string> = {};
+    result.rows.forEach(row => {
+      settings[row.key] = row.value;
+    });
+    return { success: true, data: settings };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// ADMIN USERS
+// ============================================================
+
+
+// ============================================================
+// AUDIT LOG
+// ============================================================
+
+fastify.get('/api/v1/audit', async () => {
+  try {
+    const result = await db.query(`
+      SELECT al.*, u.username 
+      FROM "AuditLog" al 
+      LEFT JOIN "User" u ON al."userId" = u.id 
+      ORDER BY al."createdAt" DESC 
+      LIMIT 20
+    `);
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// SUPPORT TICKETS
+// ============================================================
+
+fastify.get('/api/v1/support/tickets', async () => {
+  try {
+    const result = await db.query(`
+      SELECT st.*, c."fullName" as "customerName" 
+      FROM "SupportTickets" st 
+      JOIN "Customer" c ON st."customerId" = c.id 
+      ORDER BY st."createdAt" DESC
+      LIMIT 20
+    `);
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// FAQ
+// ============================================================
+
+fastify.get('/api/v1/faq', async () => {
+  try {
+    const result = await db.query('SELECT * FROM "FAQ" ORDER BY "displayOrder"');
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// TERMS
+// ============================================================
+
+fastify.get('/api/v1/terms', async () => {
+  try {
+    const result = await db.query('SELECT * FROM "TermsVersion" ORDER BY version DESC');
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// ABOUT
+// ============================================================
+
+fastify.get('/api/v1/about', async () => {
+  try {
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS "About" (
+        id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        title TEXT NOT NULL DEFAULT 'Ale Kircha',
+        content TEXT NOT NULL DEFAULT 'Ale Kircha is a digital meat-sharing platform.',
+        "updatedAt" TIMESTAMP DEFAULT new Date()
+      )
+    `);
+    const result = await db.query('SELECT * FROM "About" LIMIT 1');
+    if (result.rows.length === 0) {
+      await db.query(`
+        INSERT INTO "About" (title, content) VALUES 
+        ('Ale Kircha', 'Ale Kircha is a digital meat-sharing platform that connects customers with organized Kircha groups.')
+      `);
+      const newResult = await db.query('SELECT * FROM "About" LIMIT 1');
+      return { success: true, data: newResult.rows[0] };
+    }
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// FEES
+// ============================================================
+
+fastify.get('/api/v1/fees', async (request) => {
+  try {
+    const queryParams = request.query as any;
+    const category = queryParams.category || '';
+    let query = 'SELECT * FROM "FeeConfiguration"';
+    const params: any[] = [];
+    if (category) {
+      query += ' WHERE category = $1';
+      params.push(category);
+    }
+    query += ' ORDER BY "createdAt" DESC';
+    const result = await db.query(query, params);
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// SELF HELP
+// ============================================================
+
+fastify.get('/api/v1/selfhelp', async () => {
+  try {
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS "SelfHelp" (
+        id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        "titleEn" TEXT NOT NULL,
+        "titleAm" TEXT NOT NULL,
+        "contentEn" TEXT NOT NULL,
+        "contentAm" TEXT NOT NULL,
+        category TEXT DEFAULT 'general',
+        "displayOrder" INTEGER DEFAULT 0,
+        "isActive" BOOLEAN DEFAULT true,
+        "createdAt" TIMESTAMP DEFAULT new Date(),
+        "updatedAt" TIMESTAMP DEFAULT new Date()
+      )
+    `);
+    const result = await db.query('SELECT * FROM "SelfHelp" ORDER BY "displayOrder"');
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// START SERVER
+// ============================================================
+
+const start = async () => {
+  const port = Number(process.env.PORT) || 4000;
+  const host = process.env.HOST || '0.0.0.0';
+
+  await fastify.listen({ port, host });
+  console.log(`🚀 API running on ${host}:${port}`);
+  console.log(`📊 Health: http://${host}:${port}/health`);
+};
+
+start().catch((err: any) => {
+  console.error('❌ Failed to start API:', err.message);
+  process.exit(1);
+});
+
+// ============================================================
+// FEES & CHARGES - CRUD
+// ============================================================
+
+// Get all fees
+fastify.get('/api/v1/admin/fees', async (request, reply) => {
+  try {
+    const result = await db.query('SELECT * FROM "FeeConfiguration" ORDER BY "createdAt" DESC');
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Create fee
+fastify.post('/api/v1/admin/fees', async (request, reply) => {
+  try {
+    const body = request.body as any;
+    const result = await db.query(`
+      INSERT INTO "FeeConfiguration" (name, "nameAm", type, value, category, "isActive")
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING *
+    `, [body.name, body.nameAm, body.type, body.value, body.category, body.isActive !== false]);
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Update fee
+fastify.put('/api/v1/admin/fees/:id', async (request, reply) => {
+  try {
+    const { id } = request.params as any;
+    const body = request.body as any;
+    const result = await db.query(`
+      UPDATE "FeeConfiguration" 
+      SET name = $1, "nameAm" = $2, type = $3, value = $4, category = $5, "isActive" = $6, "updatedAt" = new Date()
+      WHERE id = $7
+      RETURNING *
+    `, [body.name, body.nameAm, body.type, body.value, body.category, body.isActive, id]);
+    if (result.rows.length === 0) {
+      return { success: false, error: 'Fee not found' };
+    }
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Delete fee
+fastify.delete('/api/v1/admin/fees/:id', async (request, reply) => {
+  try {
+    const { id } = request.params as any;
+    const result = await db.query('DELETE FROM "FeeConfiguration" WHERE id = $1 RETURNING id', [id]);
+    if (result.rows.length === 0) {
+      return { success: false, error: 'Fee not found' };
+    }
+    return { success: true, data: { deleted: true } };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// DISCOUNTS - CRUD
+// ============================================================
+
+fastify.get('/api/v1/admin/discounts', async (request, reply) => {
+  try {
+    const result = await db.query('SELECT * FROM "Discounts" ORDER BY "createdAt" DESC');
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.post('/api/v1/admin/discounts', async (request, reply) => {
+  try {
+    const body = request.body as any;
+    const result = await db.query(`
+      INSERT INTO "Discounts" ("nameEn", "nameAm", type, value, "minOrder", "maxDiscount", "appliesTo", "startDate", "endDate", "isActive")
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      RETURNING *
+    `, [body.nameEn, body.nameAm, body.type, body.value, body.minOrder || 0, body.maxDiscount || null, body.appliesTo || 'all', body.startDate || null, body.endDate || null, body.isActive !== false]);
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.put('/api/v1/admin/discounts/:id', async (request, reply) => {
+  try {
+    const { id } = request.params as any;
+    const body = request.body as any;
+    const result = await db.query(`
+      UPDATE "Discounts" 
+      SET "nameEn" = $1, "nameAm" = $2, type = $3, value = $4, "minOrder" = $5, "maxDiscount" = $6, 
+          "appliesTo" = $7, "startDate" = $8, "endDate" = $9, "isActive" = $10, "updatedAt" = new Date()
+      WHERE id = $11
+      RETURNING *
+    `, [body.nameEn, body.nameAm, body.type, body.value, body.minOrder || 0, body.maxDiscount || null, body.appliesTo || 'all', body.startDate || null, body.endDate || null, body.isActive, id]);
+    if (result.rows.length === 0) {
+      return { success: false, error: 'Discount not found' };
+    }
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.delete('/api/v1/admin/discounts/:id', async (request, reply) => {
+  try {
+    const { id } = request.params as any;
+    const result = await db.query('DELETE FROM "Discounts" WHERE id = $1 RETURNING id', [id]);
+    if (result.rows.length === 0) {
+      return { success: false, error: 'Discount not found' };
+    }
+    return { success: true, data: { deleted: true } };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// REFUND FEES - CRUD
+// ============================================================
+
+fastify.get('/api/v1/admin/refund-fees', async (request, reply) => {
+  try {
+    const result = await db.query('SELECT * FROM "RefundFees" ORDER BY "createdAt" DESC');
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.post('/api/v1/admin/refund-fees', async (request, reply) => {
+  try {
+    const body = request.body as any;
+    const result = await db.query(`
+      INSERT INTO "RefundFees" ("nameEn", "nameAm", type, value, "minAmount", "maxAmount", "appliesTo", "isActive")
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      RETURNING *
+    `, [body.nameEn, body.nameAm, body.type, body.value, body.minAmount || 0, body.maxAmount || null, body.appliesTo || 'all', body.isActive !== false]);
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.put('/api/v1/admin/refund-fees/:id', async (request, reply) => {
+  try {
+    const { id } = request.params as any;
+    const body = request.body as any;
+    const result = await db.query(`
+      UPDATE "RefundFees" 
+      SET "nameEn" = $1, "nameAm" = $2, type = $3, value = $4, "minAmount" = $5, "maxAmount" = $6, 
+          "appliesTo" = $7, "isActive" = $8, "updatedAt" = new Date()
+      WHERE id = $9
+      RETURNING *
+    `, [body.nameEn, body.nameAm, body.type, body.value, body.minAmount || 0, body.maxAmount || null, body.appliesTo || 'all', body.isActive, id]);
+    if (result.rows.length === 0) {
+      return { success: false, error: 'Refund fee not found' };
+    }
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.delete('/api/v1/admin/refund-fees/:id', async (request, reply) => {
+  try {
+    const { id } = request.params as any;
+    const result = await db.query('DELETE FROM "RefundFees" WHERE id = $1 RETURNING id', [id]);
+    if (result.rows.length === 0) {
+      return { success: false, error: 'Refund fee not found' };
+    }
+    return { success: true, data: { deleted: true } };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// GROUP RULES - CRUD
+// ============================================================
+
+fastify.get('/api/v1/admin/group-rules', async (request, reply) => {
+  try {
+    const result = await db.query('SELECT * FROM "GroupRules" ORDER BY "ruleKey"');
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.put('/api/v1/admin/group-rules/:key', async (request, reply) => {
+  try {
+    const { key } = request.params as any;
+    const body = request.body as any;
+    const result = await db.query(`
+      UPDATE "GroupRules" 
+      SET "ruleValue" = $1, "descriptionEn" = $2, "descriptionAm" = $3, "updatedAt" = new Date()
+      WHERE "ruleKey" = $4
+      RETURNING *
+    `, [body.ruleValue, body.descriptionEn, body.descriptionAm, key]);
+    if (result.rows.length === 0) {
+      return { success: false, error: 'Rule not found' };
+    }
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// ABOUT US / COMPANY INFO - CRUD
+// ============================================================
+
+fastify.get('/api/v1/admin/about', async (request, reply) => {
+  try {
+    const result = await db.query('SELECT * FROM "About" LIMIT 1');
+    return { success: true, data: result.rows[0] || {} };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.put('/api/v1/admin/about', async (request, reply) => {
+  try {
+    const body = request.body as any;
+    const result = await db.query(`
+      UPDATE "About" 
+      SET title = $1, content = $2, phone = $3, email = $4, address = $5, 
+          "addressAm" = $6, "workingHours" = $7, telegram = $8, "updatedAt" = new Date()
+      RETURNING *
+    `, [body.title, body.content, body.phone, body.email, body.address, body.addressAm, body.workingHours, body.telegram]);
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// CONTACT US - CRUD
+// ============================================================
+
+fastify.get('/api/v1/admin/contact', async (request, reply) => {
+  try {
+    const result = await db.query('SELECT * FROM "ContactInfo" ORDER BY "displayOrder"');
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.post('/api/v1/admin/contact', async (request, reply) => {
+  try {
+    const body = request.body as any;
+    const result = await db.query(`
+      INSERT INTO "ContactInfo" (type, "labelEn", "labelAm", value, "displayOrder", "isActive")
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING *
+    `, [body.type, body.labelEn, body.labelAm, body.value, body.displayOrder || 0, body.isActive !== false]);
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.put('/api/v1/admin/contact/:id', async (request, reply) => {
+  try {
+    const { id } = request.params as any;
+    const body = request.body as any;
+    const result = await db.query(`
+      UPDATE "ContactInfo" 
+      SET type = $1, "labelEn" = $2, "labelAm" = $3, value = $4, "displayOrder" = $5, "isActive" = $6, "updatedAt" = new Date()
+      WHERE id = $7
+      RETURNING *
+    `, [body.type, body.labelEn, body.labelAm, body.value, body.displayOrder || 0, body.isActive, id]);
+    if (result.rows.length === 0) {
+      return { success: false, error: 'Contact not found' };
+    }
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.delete('/api/v1/admin/contact/:id', async (request, reply) => {
+  try {
+    const { id } = request.params as any;
+    const result = await db.query('DELETE FROM "ContactInfo" WHERE id = $1 RETURNING id', [id]);
+    if (result.rows.length === 0) {
+      return { success: false, error: 'Contact not found' };
+    }
+    return { success: true, data: { deleted: true } };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// GROUPS - APPROVE CUSTOMER CREATED
+// ============================================================
+
+fastify.get('/api/v1/admin/groups/pending', async (request, reply) => {
+  try {
+    const result = await db.query(`
+      SELECT g.*, c."fullName" as "customerName", u."telegramId" 
+      FROM "Groups" g 
+      LEFT JOIN "Customer" c ON g."createdByCustomerId" = c.id 
+      LEFT JOIN "User" u ON c."userId" = u.id 
+      WHERE g.status = 'PENDING_REVIEW' OR g.status = 'DRAFT'
+      ORDER BY g."createdAt" DESC
+    `);
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.put('/api/v1/admin/groups/:id/approve', async (request, reply) => {
+  try {
+    const { id } = request.params as any;
+    const result = await db.query(`
+      UPDATE "Groups" 
+      SET status = 'OPEN', "isPublished" = true, "approvedAt" = new Date(), "approvedBy" = $2
+      WHERE id = $1
+      RETURNING *
+    `, [id, request.headers['x-telegram-id'] || 'admin']);
+    if (result.rows.length === 0) {
+      return { success: false, error: 'Group not found' };
+    }
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.put('/api/v1/admin/groups/:id/reject', async (request, reply) => {
+  try {
+    const { id } = request.params as any;
+    const body = request.body as any;
+    const result = await db.query(`
+      UPDATE "Groups" 
+      SET status = 'REJECTED', "approvedBy" = $2, "remarks" = $3
+      WHERE id = $1
+      RETURNING *
+    `, [id, request.headers['x-telegram-id'] || 'admin', body.reason || 'No reason provided']);
+    if (result.rows.length === 0) {
+      return { success: false, error: 'Group not found' };
+    }
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// GROUPS - CRUD
+// ============================================================
+
+fastify.post('/api/v1/admin/groups', async (request, reply) => {
+  try {
+    const body = request.body as any;
+    const result = await db.query(`
+      INSERT INTO "Groups" ("groupId", name, "nameAm", description, "kirchaTypeId", status, 
+        "maxQuota", "fullPrice", "halfPrice", "quarterPrice", "serviceFee", "deliveryFee", 
+        address, "maturityDate", "expiryDate", "isPublished", "createdBy")
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+      RETURNING *
+    `, [
+      body.groupId || `KRG-${Date.now()}`,
+      body.name, body.nameAm || body.name,
+      body.description, body.kirchaTypeId, body.status || 'DRAFT',
+      body.maxQuota || 0, body.fullPrice || 0, body.halfPrice || 0, body.quarterPrice || 0,
+      body.serviceFee || 0, body.deliveryFee || 0,
+      body.address, body.maturityDate, body.expiryDate,
+      body.isPublished || false, request.headers['x-telegram-id'] || 'admin'
+    ]);
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.put('/api/v1/admin/groups/:id', async (request, reply) => {
+  try {
+    const { id } = request.params as any;
+    const body = request.body as any;
+    const result = await db.query(`
+      UPDATE "Groups" 
+      SET name = $1, "nameAm" = $2, description = $3, "kirchaTypeId" = $4, status = $5,
+        "maxQuota" = $6, "fullPrice" = $7, "halfPrice" = $8, "quarterPrice" = $9,
+        "serviceFee" = $10, "deliveryFee" = $11, address = $12,
+        "maturityDate" = $13, "expiryDate" = $14, "updatedAt" = new Date()
+      WHERE id = $15
+      RETURNING *
+    `, [
+      body.name, body.nameAm || body.name, body.description,
+      body.kirchaTypeId, body.status,
+      body.maxQuota, body.fullPrice, body.halfPrice, body.quarterPrice,
+      body.serviceFee, body.deliveryFee,
+      body.address, body.maturityDate, body.expiryDate, id
+    ]);
+    if (result.rows.length === 0) {
+      return { success: false, error: 'Group not found' };
+    }
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.delete('/api/v1/admin/groups/:id', async (request, reply) => {
+  try {
+    const { id } = request.params as any;
+    const result = await db.query('UPDATE "Groups" SET status = $1 WHERE id = $2 RETURNING id', ['CANCELLED', id]);
+    if (result.rows.length === 0) {
+      return { success: false, error: 'Group not found' };
+    }
+    return { success: true, data: { deleted: true } };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// USERS - MOVE BETWEEN GROUPS
+// ============================================================
+
+fastify.put('/api/v1/admin/users/move', async (request, reply) => {
+  try {
+    const body = request.body as any;
+    // Move user from one group to another
+    const result = await db.query(`
+      UPDATE "GroupMemberships" 
+      SET "groupId" = $1, "updatedAt" = new Date()
+      WHERE "customerId" = $2 AND "groupId" = $3
+      RETURNING *
+    `, [body.targetGroupId, body.customerId, body.sourceGroupId]);
+    if (result.rows.length === 0) {
+      return { success: false, error: 'Membership not found' };
+    }
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// TERMS & CONDITIONS - CRUD
+// ============================================================
+
+fastify.post('/api/v1/admin/terms', async (request, reply) => {
+  try {
+    const body = request.body as any;
+    const result = await db.query(`
+      INSERT INTO "TermsVersion" (version, "titleEn", "titleAm", "contentEn", "contentAm", "effectiveFrom", "isActive")
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING *
+    `, [body.version, body.titleEn, body.titleAm, body.contentEn, body.contentAm, body.effectiveFrom || new Date(), body.isActive || false]);
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.put('/api/v1/admin/terms/:id', async (request, reply) => {
+  try {
+    const { id } = request.params as any;
+    const body = request.body as any;
+    const result = await db.query(`
+      UPDATE "TermsVersion" 
+      SET "titleEn" = $1, "titleAm" = $2, "contentEn" = $3, "contentAm" = $4, 
+          "effectiveFrom" = $5, "isActive" = $6
+      WHERE id = $7
+      RETURNING *
+    `, [body.titleEn, body.titleAm, body.contentEn, body.contentAm, body.effectiveFrom, body.isActive, id]);
+    if (result.rows.length === 0) {
+      return { success: false, error: 'Terms not found' };
+    }
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.delete('/api/v1/admin/terms/:id', async (request, reply) => {
+  try {
+    const { id } = request.params as any;
+    const result = await db.query('DELETE FROM "TermsVersion" WHERE id = $1 RETURNING id', [id]);
+    if (result.rows.length === 0) {
+      return { success: false, error: 'Terms not found' };
+    }
+    return { success: true, data: { deleted: true } };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// FAQ - CRUD
+// ============================================================
+
+fastify.post('/api/v1/admin/faq', async (request, reply) => {
+  try {
+    const body = request.body as any;
+    const result = await db.query(`
+      INSERT INTO "FAQ" ("questionEn", "questionAm", "answerEn", "answerAm", category, "displayOrder", "isActive")
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING *
+    `, [body.questionEn, body.questionAm, body.answerEn, body.answerAm, body.category || 'general', body.displayOrder || 0, body.isActive !== false]);
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.put('/api/v1/admin/faq/:id', async (request, reply) => {
+  try {
+    const { id } = request.params as any;
+    const body = request.body as any;
+    const result = await db.query(`
+      UPDATE "FAQ" 
+      SET "questionEn" = $1, "questionAm" = $2, "answerEn" = $3, "answerAm" = $4, 
+          category = $5, "displayOrder" = $6, "isActive" = $7, "updatedAt" = new Date()
+      WHERE id = $8
+      RETURNING *
+    `, [body.questionEn, body.questionAm, body.answerEn, body.answerAm, body.category || 'general', body.displayOrder || 0, body.isActive, id]);
+    if (result.rows.length === 0) {
+      return { success: false, error: 'FAQ not found' };
+    }
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.delete('/api/v1/admin/faq/:id', async (request, reply) => {
+  try {
+    const { id } = request.params as any;
+    const result = await db.query('DELETE FROM "FAQ" WHERE id = $1 RETURNING id', [id]);
+    if (result.rows.length === 0) {
+      return { success: false, error: 'FAQ not found' };
+    }
+    return { success: true, data: { deleted: true } };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// SELF HELP - CRUD
+// ============================================================
+
+fastify.post('/api/v1/admin/selfhelp', async (request, reply) => {
+  try {
+    const body = request.body as any;
+    const result = await db.query(`
+      INSERT INTO "SelfHelp" ("titleEn", "titleAm", "contentEn", "contentAm", category, "displayOrder", "isActive")
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING *
+    `, [body.titleEn, body.titleAm, body.contentEn, body.contentAm, body.category || 'general', body.displayOrder || 0, body.isActive !== false]);
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.put('/api/v1/admin/selfhelp/:id', async (request, reply) => {
+  try {
+    const { id } = request.params as any;
+    const body = request.body as any;
+    const result = await db.query(`
+      UPDATE "SelfHelp" 
+      SET "titleEn" = $1, "titleAm" = $2, "contentEn" = $3, "contentAm" = $4, 
+          category = $5, "displayOrder" = $6, "isActive" = $7, "updatedAt" = new Date()
+      WHERE id = $8
+      RETURNING *
+    `, [body.titleEn, body.titleAm, body.contentEn, body.contentAm, body.category || 'general', body.displayOrder || 0, body.isActive, id]);
+    if (result.rows.length === 0) {
+      return { success: false, error: 'Article not found' };
+    }
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.delete('/api/v1/admin/selfhelp/:id', async (request, reply) => {
+  try {
+    const { id } = request.params as any;
+    const result = await db.query('DELETE FROM "SelfHelp" WHERE id = $1 RETURNING id', [id]);
+    if (result.rows.length === 0) {
+      return { success: false, error: 'Article not found' };
+    }
+    return { success: true, data: { deleted: true } };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+
+// ============================================================
+// BANK ACCOUNTS - CRUD
+// ============================================================
+
+// Get all bank accounts
+fastify.get('/api/v1/admin/banks', async (request, reply) => {
+  try {
+    const result = await db.query('SELECT * FROM "BankAccounts" ORDER BY "displayOrder"');
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Create bank account
+fastify.post('/api/v1/admin/banks', async (request, reply) => {
+  try {
+    const body = request.body as any;
+    const result = await db.query(`
+      INSERT INTO "BankAccounts" ("bankNameEn", "bankNameAm", "accountName", "accountNumber", 
+        branch, "accountType", "isActive", "isDefault", "displayOrder", "createdBy")
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      RETURNING *
+    `, [
+      body.bankNameEn, body.bankNameAm, body.accountName, body.accountNumber,
+      body.branch || '', body.accountType || 'checking',
+      body.isActive !== false, body.isDefault || false,
+      body.displayOrder || 0, request.headers['x-telegram-id'] || 'admin'
+    ]);
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Update bank account
+fastify.put('/api/v1/admin/banks/:id', async (request, reply) => {
+  try {
+    const { id } = request.params as any;
+    const body = request.body as any;
+    const result = await db.query(`
+      UPDATE "BankAccounts" 
+      SET "bankNameEn" = $1, "bankNameAm" = $2, "accountName" = $3, "accountNumber" = $4,
+          branch = $5, "accountType" = $6, "isActive" = $7, "isDefault" = $8, 
+          "displayOrder" = $9, "updatedAt" = new Date()
+      WHERE id = $10
+      RETURNING *
+    `, [
+      body.bankNameEn, body.bankNameAm, body.accountName, body.accountNumber,
+      body.branch, body.accountType, body.isActive, body.isDefault,
+      body.displayOrder, id
+    ]);
+    if (result.rows.length === 0) {
+      return { success: false, error: 'Bank account not found' };
+    }
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Delete bank account
+fastify.delete('/api/v1/admin/banks/:id', async (request, reply) => {
+  try {
+    const { id } = request.params as any;
+    const result = await db.query('DELETE FROM "BankAccounts" WHERE id = $1 RETURNING id', [id]);
+    if (result.rows.length === 0) {
+      return { success: false, error: 'Bank account not found' };
+    }
+    return { success: true, data: { deleted: true } };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
+// NOTIFICATION SYSTEM
+// ============================================================
+
+// Get admin notifications
+fastify.get('/api/v1/admin/notifications', async (request, reply) => {
+  try {
+    const result = await db.query(`
+      SELECT * FROM "AdminNotifications" 
+      ORDER BY "createdAt" DESC 
+      LIMIT 50
+    `);
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Mark notification as read
+fastify.put('/api/v1/admin/notifications/:id/read', async (request, reply) => {
+  try {
+    const { id } = request.params as any;
+    const result = await db.query(`
+      UPDATE "AdminNotifications" 
+      SET "isRead" = true, "readAt" = new Date()
+      WHERE id = $1
+      RETURNING *
+    `, [id]);
+    return { success: true, data: result.rows[0] || {} };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Create notification function
+async function createAdminNotification(type: string, title: string, body: string, data: any = {}) {
+  try {
+    await db.query(`
+      INSERT INTO "AdminNotifications" (type, title, body, data, "createdAt")
+      VALUES ($1, $2, $3, $4, new Date())
+    `, [type, title, body, JSON.stringify(data)]);
+  } catch (error) {
+    console.error('Failed to create admin notification:', error);
+  }
+}
+
+// Export for use in other functions
+// Note: This will be used by the customer bot handlers
+
+// ============================================================
+// ADMIN NOTIFICATION RECEIVER
+// ============================================================
+
+fastify.post('/api/v1/admin/notify', async (request, reply) => {
+  try {
+    const body = request.body as any;
+    
+    // Store notification in database
+    await db.query(`
+      INSERT INTO "AdminNotifications" (type, title, body, data, "createdAt")
+      VALUES ($1, $2, $3, $4, new Date())
+    `, [body.type, body.title, body.message, JSON.stringify(body.data || {})]);
+    
+    return { success: true };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+// Get recent admin notifications
+fastify.get('/api/v1/admin/notifications/recent', async (request, reply) => {
+  try {
+    const result = await db.query(`
+      SELECT * FROM "AdminNotifications" 
+      WHERE "isRead" = false
+      ORDER BY "createdAt" DESC 
+      LIMIT 20
+    `);
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Get notification count
+fastify.get('/api/v1/admin/notifications/count', async (request, reply) => {
+  try {
+    const result = await db.query(`
+      SELECT COUNT(*) FROM "AdminNotifications" 
+      WHERE "isRead" = false
+    `);
+    return { success: true, data: { unread: parseInt(result.rows[0].count) } };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+
+// ============================================================
+// SETTINGS API ENDPOINTS
+// ============================================================
+
+// Get all settings by category
+fastify.get('/api/v1/admin/settings/:category', async (request, reply) => {
+  try {
+    const { category } = request.params as any;
+    let tableName = '';
+    switch(category) {
+      case 'group': tableName = '"GroupSettings"'; break;
+      case 'payment': tableName = '"PaymentSettings"'; break;
+      case 'notification': tableName = '"NotificationSettings"'; break;
+      case 'security': tableName = '"SecuritySettings"'; break;
+      default: return { success: false, error: 'Invalid category' };
+    }
+    const result = await db.query(`SELECT * FROM ${tableName} ORDER BY "settingKey"`);
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Update a setting
+fastify.put('/api/v1/admin/settings/:category/:key', async (request, reply) => {
+  try {
+    const { category, key } = request.params as any;
+    const body = request.body as any;
+    let tableName = '';
+    switch(category) {
+      case 'group': tableName = '"GroupSettings"'; break;
+      case 'payment': tableName = '"PaymentSettings"'; break;
+      case 'notification': tableName = '"NotificationSettings"'; break;
+      case 'security': tableName = '"SecuritySettings"'; break;
+      default: return { success: false, error: 'Invalid category' };
+    }
+    const result = await db.query(
+      `UPDATE ${tableName} SET "settingValue" = $1, "updatedAt" = new Date() WHERE "settingKey" = $2 RETURNING *`,
+      [body.settingValue, key]
+    );
+    if (result.rows.length === 0) {
+      return { success: false, error: 'Setting not found' };
+    }
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Reset setting to default
+fastify.post('/api/v1/admin/settings/:category/:key/reset', async (request, reply) => {
+  try {
+    const { category, key } = request.params as any;
+    // Get default value from the insert statements
+    // For simplicity, we'll just return the current value
+    return { success: true, data: { message: 'Reset functionality coming soon' } };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+
+// ============================================================
+// SETTINGS API ENDPOINTS
+// ============================================================
+
+// ---------- General Settings ----------
+fastify.get('/api/v1/admin/settings/general', async (request, reply) => {
+  try {
+    const result = await db.query('SELECT * FROM "GeneralSettings" LIMIT 1');
+    return { success: true, data: result.rows[0] || {} };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.put('/api/v1/admin/settings/general', async (request, reply) => {
+  try {
+    const body = request.body as any;
+    const result = await db.query(`
+      UPDATE "GeneralSettings" 
+      SET "platformNameEn" = $1, "platformNameAm" = $2, currency = $3, 
+          "defaultLanguage" = $4, timezone = $5, "supportPhone" = $6, 
+          "supportEmail" = $7, "supportTelegram" = $8, website = $9,
+          "updatedAt" = new Date()
+      RETURNING *
+    `, [body.platformNameEn, body.platformNameAm, body.currency, 
+        body.defaultLanguage, body.timezone, body.supportPhone, 
+        body.supportEmail, body.supportTelegram, body.website]);
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ---------- Order Settings ----------
+fastify.get('/api/v1/admin/settings/order', async (request, reply) => {
+  try {
+    const result = await db.query('SELECT * FROM "OrderSettings" LIMIT 1');
+    return { success: true, data: result.rows[0] || {} };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.put('/api/v1/admin/settings/order', async (request, reply) => {
+  try {
+    const body = request.body as any;
+    const result = await db.query(`
+      UPDATE "OrderSettings" 
+      SET "minOrderAmount" = $1, "maxOrderAmount" = $2, 
+          "allowGuestOrders" = $3, "requirePhoneVerification" = $4,
+          "orderTimeoutMinutes" = $5, "updatedAt" = new Date()
+      RETURNING *
+    `, [body.minOrderAmount, body.maxOrderAmount, body.allowGuestOrders, 
+        body.requirePhoneVerification, body.orderTimeoutMinutes]);
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ---------- Payment Settings ----------
+fastify.get('/api/v1/admin/settings/payment', async (request, reply) => {
+  try {
+    const result = await db.query('SELECT * FROM "PaymentSettings" LIMIT 1');
+    return { success: true, data: result.rows[0] || {} };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.put('/api/v1/admin/settings/payment', async (request, reply) => {
+  try {
+    const body = request.body as any;
+    const result = await db.query(`
+      UPDATE "PaymentSettings" 
+      SET "paymentDeadlineMinutes" = $1, "requirePaymentAdvice" = $2,
+          "allowPartialPayment" = $3, "maxPaymentRetries" = $4,
+          "refundProcessingHours" = $5, "refundConfirmationHours" = $6,
+          "updatedAt" = new Date()
+      RETURNING *
+    `, [body.paymentDeadlineMinutes, body.requirePaymentAdvice, 
+        body.allowPartialPayment, body.maxPaymentRetries,
+        body.refundProcessingHours, body.refundConfirmationHours]);
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ---------- Group Settings ----------
+fastify.get('/api/v1/admin/settings/group', async (request, reply) => {
+  try {
+    const result = await db.query('SELECT * FROM "GroupSettings" LIMIT 1');
+    return { success: true, data: result.rows[0] || {} };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.put('/api/v1/admin/settings/group', async (request, reply) => {
+  try {
+    const body = request.body as any;
+    const result = await db.query(`
+      UPDATE "GroupSettings" 
+      SET "maxGroupsPerUser" = $1, "maxMembersPerGroup" = $2,
+          "groupExpiryDays" = $3, "allowCustomerGroupCreation" = $4,
+          "requireAdminApproval" = $5, "minMembersRequired" = $6,
+          "autoCloseOnFull" = $7, "updatedAt" = new Date()
+      RETURNING *
+    `, [body.maxGroupsPerUser, body.maxMembersPerGroup, body.groupExpiryDays,
+        body.allowCustomerGroupCreation, body.requireAdminApproval,
+        body.minMembersRequired, body.autoCloseOnFull]);
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ---------- Delivery Settings ----------
+fastify.get('/api/v1/admin/settings/delivery', async (request, reply) => {
+  try {
+    const result = await db.query('SELECT * FROM "DeliverySettings" LIMIT 1');
+    return { success: true, data: result.rows[0] || {} };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.put('/api/v1/admin/settings/delivery', async (request, reply) => {
+  try {
+    const body = request.body as any;
+    const result = await db.query(`
+      UPDATE "DeliverySettings" 
+      SET "defaultDeliveryFee" = $1, "freeDeliveryThreshold" = $2,
+          "maxDeliveryRadiusKm" = $3, "allowPickup" = $4,
+          "deliveryTimeSlots" = $5, "updatedAt" = new Date()
+      RETURNING *
+    `, [body.defaultDeliveryFee, body.freeDeliveryThreshold, 
+        body.maxDeliveryRadiusKm, body.allowPickup, 
+        JSON.stringify(body.deliveryTimeSlots || ['Morning', 'Afternoon', 'Evening'])]);
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ---------- Notification Settings ----------
+fastify.get('/api/v1/admin/settings/notification', async (request, reply) => {
+  try {
+    const result = await db.query('SELECT * FROM "NotificationSettings" LIMIT 1');
+    return { success: true, data: result.rows[0] || {} };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.put('/api/v1/admin/settings/notification', async (request, reply) => {
+  try {
+    const body = request.body as any;
+    const result = await db.query(`
+      UPDATE "NotificationSettings" 
+      SET "enableEmailNotifications" = $1, "enableTelegramNotifications" = $2,
+          "adminNotificationChannels" = $3, "customerNotificationChannels" = $4,
+          "updatedAt" = new Date()
+      RETURNING *
+    `, [body.enableEmailNotifications, body.enableTelegramNotifications,
+        JSON.stringify(body.adminNotificationChannels || ['telegram']),
+        JSON.stringify(body.customerNotificationChannels || ['telegram'])]);
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ---------- Admin Users ----------
+fastify.get('/api/v1/admin/users', async (request, reply) => {
+  try {
+    const result = await db.query(`
+      SELECT u.*, r.name as roleName, r.permissions 
+      FROM "User" u
+      LEFT JOIN "AdminRoles" r ON u.role = r.name
+      WHERE u.role IN ('SUPER_ADMIN', 'ADMIN', 'PAYMENT_VERIFIER', 'ORDER_MANAGER', 'DELIVERY_MANAGER', 'REPORT_VIEWER', 'SUPPORT_AGENT')
+      ORDER BY u."createdAt" DESC
+    `);
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.post('/api/v1/admin/users', async (request, reply) => {
+  try {
+    const body = request.body as any;
+    const result = await db.query(`
+      INSERT INTO "User" ("telegramId", username, "firstName", "lastName", phone, role, "isActive")
+      VALUES ($1, $2, $3, $4, $5, $6, true)
+      RETURNING *
+    `, [body.telegramId, body.username, body.firstName, body.lastName, body.phone || '', body.role]);
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.put('/api/v1/admin/users/:id/toggle', async (request, reply) => {
+  try {
+    const { id } = request.params as any;
+    const body = request.body as any;
+    const result = await db.query(`
+      UPDATE "User" SET "isActive" = $1 WHERE id = $2 RETURNING *
+    `, [body.isActive, id]);
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ---------- FAQ ----------
+fastify.get('/api/v1/faq', async (request, reply) => {
+// ---------- Terms ----------
+fastify.get('/api/v1/terms', async (request, reply) => {
+  try {
+    const result = await db.query('SELECT * FROM "TermsVersion" ORDER BY version DESC');
+    return { success: true, data: result.rows };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.post('/api/v1/terms', async (request, reply) => {
+  try {
+    const body = request.body as any;
+    const result = await db.query(`
+      INSERT INTO "TermsVersion" (version, "titleEn", "titleAm", "contentEn", "contentAm", "effectiveFrom", "isActive")
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING *
+    `, [body.version, body.titleEn, body.titleAm, body.contentEn, body.contentAm, body.effectiveFrom || new Date(), body.isActive || false]);
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.put('/api/v1/terms/:id/publish', async (request, reply) => {
+  try {
+    const { id } = request.params as any;
+    // Deactivate all others, activate this one
+    await db.query('UPDATE "TermsVersion" SET "isActive" = false');
+    const result = await db.query(`
+      UPDATE "TermsVersion" SET "isActive" = true WHERE id = $1 RETURNING *
+    `, [id]);
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// ---------- About Us ----------
+fastify.get('/api/v1/about', async (request, reply) => {
+  try {
+    const result = await db.query('SELECT * FROM "About" LIMIT 1');
+    return { success: true, data: result.rows[0] || {} };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+fastify.put('/api/v1/about', async (request, reply) => {
+  try {
+    const body = request.body as any;
+    const result = await db.query(`
+      UPDATE "About" SET title = $1, content = $2, phone = $3, email = $4, 
+          address = $5, telegram = $6, "updatedAt" = new Date()
+      RETURNING *
+    `, [body.title, body.content, body.phone, body.email, body.address, body.telegram]);
+    return { success: true, data: result.rows[0] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+
+
+// ============================================================
+
+// ============================================================
+// START SERVER
+// ============================================================
+
+const start = async () => {
+  try {
+    await fastify.listen({ port: 3000, host: '0.0.0.0' });
+    console.log('🚀 Server running on port 3000');
+  } catch (err) {
+    fastify.log.error(err);
+    process.exit(1);
+  }
+};
+
+start();
+
+// ============================================================
+// START SERVER (already exists at line 450)
+// ============================================================
+
+
+// ============================================================
+// START SERVER
+// ============================================================
+
+const start = async () => {
+  try {
+    await fastify.listen({ port: 3000, host: '0.0.0.0' });
+    console.log('🚀 Server running on port 3000');
+    console.log('📡 Health check: http://localhost:3000/health');
+    console.log('📡 API ready at: http://localhost:3000/api/');
+  } catch (err) {
+    fastify.log.error(err);
+    process.exit(1);
+  }
+};
+
+start();

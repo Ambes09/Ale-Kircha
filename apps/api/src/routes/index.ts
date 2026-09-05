@@ -13,9 +13,9 @@ import { feeRoutes } from './feeRoutes.js';
 import { paymentRoutes } from './paymentRoutes.js';
 import { webhookRoutes } from './webhookRoutes.js';
 import { AddressController } from '../controllers/addressController.js';
-import { NotificationController } from '../controllers/notificationController.js';
+import { notificationController } from '../controllers/notificationController.js';
 import { SupportController } from '../controllers/supportController.js';
-import { ReportController } from '../controllers/reportController.js';
+import { reportController } from '../controllers/reportController.js';
 import { KirchaController } from '../controllers/kirchaController.js';
 import { KirchaTypeController } from '../controllers/kirchaTypeController.js';
 import { FeeController } from '../controllers/feeController.js';
@@ -31,9 +31,9 @@ export async function routes(fastify: FastifyInstance) {
   const kirchaController = new KirchaController();
   const kirchaTypeController = new KirchaTypeController();
   const addressController = new AddressController();
-  const notificationController = new NotificationController();
+  const notificationController = new notificationController();
   const supportController = new SupportController();
-  const reportController = new ReportController();
+  const reportController = new reportController();
   const feeController = new FeeController();
 
   // Customer Routes

@@ -19,7 +19,7 @@ export class OrderService {
           { applyTo: 'CUSTOMER', applyToId: data.customerId }
         ]
       },
-      orderBy: { priority: 'asc' }
+      orderBy: { displayOrder: 'asc' }
     });
 
     // Get delivery zone
@@ -27,11 +27,11 @@ export class OrderService {
     if (data.deliveryZone) {
       const zone = await prisma.deliveryZone.findFirst({
         where: {
-          nameEn: data.deliveryZone,
+          name: data.deliveryZone,
           isActive: true,
           minOrder: { lte: data.subtotal }
         },
-        orderBy: { priority: 'asc' }
+        orderBy: { displayOrder: 'asc' }
       });
       if (zone) deliveryFee = zone.fee;
     }
@@ -55,7 +55,7 @@ export class OrderService {
       const value = config.value;
       let appliedValue = 0;
 
-      if (config.valueType === 'PERCENTAGE') {
+      if (config.type === 'PERCENTAGE') {
         appliedValue = (data.subtotal * value) / 100;
       } else {
         appliedValue = value;
@@ -64,12 +64,12 @@ export class OrderService {
       switch (config.type) {
         case 'DISCOUNT':
           totalDiscount += appliedValue;
-          discountType = config.valueType;
+          discountType = config.type;
           discountDescription = config.nameEn;
           break;
         case 'SERVICE_CHARGE':
           totalServiceCharge += appliedValue;
-          serviceChargeType = config.valueType;
+          serviceChargeType = config.type;
           serviceChargeDescription = config.nameEn;
           break;
         case 'TAX':
@@ -97,8 +97,8 @@ export class OrderService {
         name: c.nameEn,
         type: c.type,
         value: c.value,
-        valueType: c.valueType,
-        applied: c.valueType === 'PERCENTAGE' ? (data.subtotal * c.value) / 100 : c.value
+        type: c.type,
+        applied: c.type === 'PERCENTAGE' ? (data.subtotal * c.value) / 100 : c.value
       }))
     };
   }
@@ -144,7 +144,7 @@ export class OrderService {
           deliveryFee: feeResult.deliveryFee,
           tax: feeResult.tax,
           taxRate: feeResult.taxRate,
-          additionalFees: 0,
+          additionalFee: 0,
           totalAmount: feeResult.total,
           status: 'DRAFT'
         },

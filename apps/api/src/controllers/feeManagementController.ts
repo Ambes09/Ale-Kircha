@@ -7,7 +7,7 @@ export class FeeManagementController {
   async getServiceCharges(request: FastifyRequest, reply: FastifyReply) {
     const charges = await prisma.serviceCharge.findMany({
       where: { isActive: true },
-      orderBy: { priority: 'asc' }
+      orderBy: { displayOrder: 'asc' }
     });
     return reply.send({ success: true, data: charges });
   }
@@ -16,7 +16,7 @@ export class FeeManagementController {
     const body = request.body as any;
     const charge = await prisma.serviceCharge.create({
       data: {
-        nameEn: body.nameEn,
+        name: body.nameEn,
         nameAm: body.nameAm || body.nameEn,
         type: body.type || 'FIXED',
         value: body.value || 0,
@@ -25,7 +25,7 @@ export class FeeManagementController {
         applyTo: body.applyTo || 'ALL',
         applyToId: body.applyToId,
         isActive: body.isActive !== undefined ? body.isActive : true,
-        priority: body.priority || 0
+        displayOrder: body.priority || 0
       }
     });
     return reply.status(201).send({ success: true, data: charge });
@@ -52,7 +52,7 @@ export class FeeManagementController {
     const charges = await prisma.deliveryCharge.findMany({
       where: { isActive: true },
       include: { zone: true },
-      orderBy: { priority: 'asc' }
+      orderBy: { displayOrder: 'asc' }
     });
     return reply.send({ success: true, data: charges });
   }
@@ -72,7 +72,7 @@ export class FeeManagementController {
         distanceRangeStart: body.distanceRangeStart,
         distanceRangeEnd: body.distanceRangeEnd,
         isActive: body.isActive !== undefined ? body.isActive : true,
-        priority: body.priority || 0
+        displayOrder: body.priority || 0
       },
       include: { zone: true }
     });
@@ -100,7 +100,7 @@ export class FeeManagementController {
   async getTaxConfigs(request: FastifyRequest, reply: FastifyReply) {
     const taxes = await prisma.feeConfiguration.findMany({
       where: { type: 'TAX', isActive: true },
-      orderBy: { priority: 'asc' }
+      orderBy: { displayOrder: 'asc' }
     });
     return reply.send({ success: true, data: taxes });
   }
@@ -112,12 +112,12 @@ export class FeeManagementController {
       data: {
         key: `tax_${Date.now()}`,
         type: 'TAX',
-        nameEn: body.nameEn,
+        name: body.nameEn,
         nameAm: body.nameAm || body.nameEn,
-        valueType: 'PERCENTAGE',
+        type: 'PERCENTAGE',
         value: body.value || 0,
         isActive: body.isActive !== undefined ? body.isActive : true,
-        priority: body.priority || 0,
+        displayOrder: body.priority || 0,
         applyTo: 'ALL',
         createdBy: user?.telegramId || 'system'
       }
@@ -164,7 +164,7 @@ export class FeeManagementController {
           { applyTo: 'GROUP', applyToId: groupId }
         ]
       },
-      orderBy: { priority: 'asc' }
+      orderBy: { displayOrder: 'asc' }
     });
 
     // 2. Get service charges
@@ -176,7 +176,7 @@ export class FeeManagementController {
           { applyTo: 'CUSTOMER', applyToId: customerId }
         ]
       },
-      orderBy: { priority: 'asc' }
+      orderBy: { displayOrder: 'asc' }
     });
 
     // 3. Get delivery charges
@@ -188,7 +188,7 @@ export class FeeManagementController {
           isActive: true,
           minimumOrder: { lte: subtotal }
         },
-        orderBy: { priority: 'asc' }
+        orderBy: { displayOrder: 'asc' }
       });
       if (charge) {
         deliveryCharge = charge;
@@ -201,7 +201,7 @@ export class FeeManagementController {
         type: 'TAX',
         isActive: true
       },
-      orderBy: { priority: 'asc' }
+      orderBy: { displayOrder: 'asc' }
     });
 
     // Calculate fees
@@ -214,7 +214,7 @@ export class FeeManagementController {
     for (const discount of discounts) {
       const value = discount.value;
       let applied = 0;
-      if (discount.valueType === 'PERCENTAGE') {
+      if (discount.type === 'PERCENTAGE') {
         applied = (subtotal * value) / 100;
       } else {
         applied = value;
@@ -222,7 +222,7 @@ export class FeeManagementController {
       totalDiscount += applied;
       discountBreakdown.push({
         name: discount.nameEn,
-        type: discount.valueType,
+        type: discount.type,
         value: discount.value,
         applied
       });

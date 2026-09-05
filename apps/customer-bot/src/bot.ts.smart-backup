@@ -1,0 +1,942 @@
+import { Bot, session, Context, SessionFlavor } from 'grammy';
+import { conversations, ConversationFlavor, createConversation } from '@grammyjs/conversations';
+import dotenv from 'dotenv';
+import http from 'http';
+
+dotenv.config();
+
+// ============================================================
+// TYPES
+// ============================================================
+
+interface SessionData {
+  language: 'en' | 'am';
+  step: string;
+  isRegistered: boolean;
+  customerId: string | null;
+  phoneNumber: string | null;
+  data: {
+    firstName?: string;
+    lastName?: string;
+    address?: string;
+    additionalContact?: string;
+    phone?: string;
+    termsAccepted?: boolean;
+    termsVersion?: string;
+    page?: number;
+    totalPages?: number;
+  };
+}
+
+type MyContext = Context & SessionFlavor<SessionData> & ConversationFlavor;
+
+// ============================================================
+// CONFIG
+// ============================================================
+
+const API_URL = process.env.API_URL || 'http://localhost:4000';
+const BOT_TOKEN = process.env.CUSTOMER_BOT_TOKEN;
+const PORT = parseInt(process.env.PORT || '10001');
+
+if (!BOT_TOKEN) {
+  console.error('❌ CUSTOMER_BOT_TOKEN is required!');
+  process.exit(1);
+}
+
+const bot = new Bot<MyContext>(BOT_TOKEN);
+
+// ============================================================
+// MIDDLEWARE
+// ============================================================
+
+bot.use(session({
+  initial: (): SessionData => ({
+    language: 'en',
+    step: 'start',
+    isRegistered: false,
+    customerId: null,
+    phoneNumber: null,
+    data: {},
+  }),
+}));
+
+bot.use(conversations());
+
+// ============================================================
+// TRANSLATIONS - COMPLETE BILINGUAL
+// ============================================================
+
+const i18n = {
+  en: {
+    // Welcome
+    welcome: '🥩 ALE KIRCHA',
+    welcomeDesc: 'Ale Kircha is a digital platform that helps customers participate in organized traditional Ethiopian meat-sharing groups.',
+    welcomeDesc2: 'Share, save, and enjoy quality meat with your community.',
+    features: '🌟 FEATURES',
+    feature1: '✅ Join Kircha Groups',
+    feature2: '✅ Place Orders',
+    feature3: '✅ Make Payments',
+    feature4: '✅ Track Orders',
+    feature5: '✅ Request Refunds',
+    feature6: '✅ 24/7 Support',
+    selectLanguage: '🌐 SELECT LANGUAGE',
+    selectLanguageDesc: 'Please select your preferred language to continue.',
+    english: '🇬🇧 English',
+    amharic: '🇪🇹 አማርኛ',
+    languageSet: '✅ Language set to English',
+    languageSetDesc: 'You will receive all future messages in English.',
+
+    // Phone
+    phoneTitle: '📱 VERIFY YOUR ACCOUNT',
+    phoneDesc: 'To continue with your registration, please share your phone number.',
+    phoneWhy: '📢 WHY WE NEED YOUR PHONE NUMBER:',
+    phoneWhy1: '✅ Account verification',
+    phoneWhy2: '✅ Order notifications',
+    phoneWhy3: '✅ Payment confirmations',
+    phoneWhy4: '✅ Refund processing',
+    phoneWhy5: '✅ Customer support',
+    phonePrivacy: '🔒 PRIVACY NOTICE',
+    phonePrivacyDesc: 'Your phone number is secure and will only be used for account identification, order and payment notifications, refund processing, and customer support. We do not share your information with third parties without your consent.',
+    sharePhone: '📱 Share Phone Number',
+
+    // Existing User
+    welcomeBack: '✅ WELCOME BACK!',
+    accountFound: 'We found an existing account registered with this phone number.',
+    yourAccount: '👤 YOUR ACCOUNT',
+    quickSummary: '📊 QUICK SUMMARY',
+    totalOrders: '🛒 Total Orders',
+    completedOrders: '✅ Completed',
+    pendingOrders: '⏳ Pending',
+    refunds: '↩️ Refunds',
+    totalSpent: '💰 Total Spent',
+    goDashboard: '🏠 Go to Dashboard',
+    myOrders: '📋 My Orders',
+
+    // Registration
+    registrationTitle: '📝 COMPLETE YOUR REGISTRATION',
+    personalInfo: '👤 PERSONAL INFORMATION',
+    registrationForm: '📋 REGISTRATION FORM',
+    fullName: 'Full Name: *',
+    phoneNumber: 'Phone Number: *',
+    address: 'Address: (Optional)',
+    preferredLanguage: 'Preferred Language:',
+    additionalContact: 'Additional Contact: (Optional)',
+    whyWeNeed: 'ℹ️ WHY WE NEED THIS',
+    whyName: '• Full Name: Account identification',
+    whyPhone: '• Phone Number: Order and payment notifications',
+    whyAddress: '• Address: Delivery information',
+    continue: '✅ Continue',
+    back: '🔙 Back',
+
+    // Terms
+    termsTitle: '📜 TERMS & CONDITIONS',
+    termsPage: 'Page',
+    termsAccept: '✅ I Accept',
+    termsDecline: '❌ Decline',
+    termsPrevious: '◀ Previous',
+    termsNext: 'Next ▶',
+    termsAcceptance: 'By clicking "I Accept", you agree to all the terms and conditions outlined above.',
+    termsRead: 'I have read and understood all the terms.',
+    termsDeclineMsg: 'You must accept the Terms & Conditions to continue.',
+
+    // Registration Complete
+    regComplete: '✅ REGISTRATION COMPLETE!',
+    regWelcome: '🎉 Welcome to Ale Kircha!',
+    regSuccess: 'Your account has been successfully created.',
+    yourDetails: '👤 YOUR DETAILS',
+    customerId: 'Customer ID',
+    name: 'Name',
+    phone: 'Phone',
+    language: 'Language',
+    registrationDate: 'Registration Date',
+    status: 'Status',
+    whatsNext: '📋 WHAT\'S NEXT?',
+    whatsNext1: '• Browse available Kircha groups',
+    whatsNext2: '• Join a group and place an order',
+    whatsNext3: '• Track your orders and payments',
+    whatsNext4: '• Request refunds when eligible',
+    getStarted: '🚀 GET STARTED',
+    goMainMenu: '🏠 Go to Main Menu',
+    viewAvailable: '🛒 View Available Kircha',
+
+    // Errors
+    invalidName: 'Please enter a valid name (2-100 characters)',
+    invalidPhone: 'Please enter a valid Ethiopian phone number (e.g., 0911123456)',
+    invalidAddress: 'Address must be between 5 and 200 characters',
+    phoneExists: 'This phone number is already registered. Please login.',
+    mustAcceptTerms: 'You must accept the Terms & Conditions to continue.',
+    networkError: '❌ Network error. Please try again later.',
+    error: '❌ Something went wrong. Please try again.',
+  },
+  am: {
+    // Welcome
+    welcome: '🥩 አለ ቅርጫ',
+    welcomeDesc: 'አለ ቅርጫ ደንበኞች በተደራጀ የባህላዊ የኢትዮጵያ የስጋ መጋሪያ ቡድኖች ውስጥ እንዲሳተፉ የሚያስችል ዲጂታል መድረክ ነው።',
+    welcomeDesc2: 'ከማህበረሰብዎ ጋር ጥራት ያለው ስጋ ይጋሩ፣ ይቆጥቡ እና ይደሰቱ።',
+    features: '🌟 ባህሪያት',
+    feature1: '✅ የቅርጫ ቡድኖችን ይቀላቀሉ',
+    feature2: '✅ ትዕዛዝ ያስገቡ',
+    feature3: '✅ ክፍያ ይፈጽሙ',
+    feature4: '✅ ትዕዛዞችዎን ይከታተሉ',
+    feature5: '✅ ተመላሽ ገንዘብ ይጠይቁ',
+    feature6: '✅ 24/7 ድጋፍ',
+    selectLanguage: '🌐 ቋንቋዎን ይምረጡ',
+    selectLanguageDesc: 'ለመቀጠል ተመራጭ ቋንቋዎን ይምረጡ።',
+    english: '🇬🇧 English',
+    amharic: '🇪🇹 አማርኛ',
+    languageSet: '✅ ቋንቋ ተመርጧል',
+    languageSetDesc: 'ከአሁን በኋላ ሁሉም መልዕክቶች በአማርኛ ይላካሉ።',
+
+    // Phone
+    phoneTitle: '📱 መለያዎን ያረጋግጡ',
+    phoneDesc: 'ምዝገባዎን ለመቀጠል እባክዎ ስልክ ቁጥርዎን ያጋሩ።',
+    phoneWhy: '📢 ስልክ ቁጥርዎን ለምን እንፈልጋለን?',
+    phoneWhy1: '✅ የመለያ ማረጋገጫ',
+    phoneWhy2: '✅ የትዕዛዝ ማሳወቂያዎች',
+    phoneWhy3: '✅ የክፍያ ማረጋገጫዎች',
+    phoneWhy4: '✅ የተመላሽ ገንዘብ ሂደት',
+    phoneWhy5: '✅ የደንበኛ ድጋፍ',
+    phonePrivacy: '🔒 የግላዊነት ማሳሰቢያ',
+    phonePrivacyDesc: 'የእርስዎ ስልክ ቁጥር በደህንነት ይጠበቃል እና ለመለያ መለየት፣ የትዕዛዝና የክፍያ ማሳወቂያዎች፣ የተመላሽ ገንዘብ ሂደት እና የደንበኛ ድጋፍ ብቻ ጥቅም ላይ ይውላል። ያለእርስዎ ፈቃድ የግል መረጃዎን ለሶስተኛ ወገኖች አናጋራም።',
+    sharePhone: '📱 ስልክ ቁጥር ያጋሩ',
+
+    // Existing User
+    welcomeBack: '✅ እንኳን ደህና መጡ!',
+    accountFound: 'በዚህ ስልክ ቁጥር የተመዘገበ ነባር መለያ አግኝተናል።',
+    yourAccount: '👤 የእርስዎ መለያ',
+    quickSummary: '📊 ፈጣን ማጠቃለያ',
+    totalOrders: '🛒 ጠቅላላ ትዕዛዞች',
+    completedOrders: '✅ የተጠናቀቁ',
+    pendingOrders: '⏳ በመጠባበቅ ላይ',
+    refunds: '↩️ ተመላሽ ገንዘብ',
+    totalSpent: '💰 ጠቅላላ ወጪ',
+    goDashboard: '🏠 ወደ ዳሽቦርድ',
+    myOrders: '📋 ትዕዛዞቼ',
+
+    // Registration
+    registrationTitle: '📝 ምዝገባዎን ያጠናቅቁ',
+    personalInfo: '👤 የግል መረጃ',
+    registrationForm: '📋 የምዝገባ ቅጽ',
+    fullName: 'ሙሉ ስም፦ *',
+    phoneNumber: 'ስልክ ቁጥር፦ *',
+    address: 'አድራሻ፦ (አማራጭ)',
+    preferredLanguage: 'ተመራጭ ቋንቋ፦',
+    additionalContact: 'ተጨማሪ የመገኛ መረጃ፦ (አማራጭ)',
+    whyWeNeed: 'ℹ️ ይህን መረጃ ለምን እንፈልጋለን?',
+    whyName: '• ሙሉ ስም፦ መለያ ለመለየት',
+    whyPhone: '• ስልክ ቁጥር፦ የትዕዛዝና የክፍያ ማሳወቂያዎች',
+    whyAddress: '• አድራሻ፦ የመላኪያ መረጃ',
+    continue: '✅ ቀጥል',
+    back: '🔙 ተመለስ',
+
+    // Terms
+    termsTitle: '📜 ውሎችና ሁኔታዎች',
+    termsPage: 'ገጽ',
+    termsAccept: '✅ ተቀብያለሁ',
+    termsDecline: '❌ አልቀበልም',
+    termsPrevious: '◀ ቀዳሚ',
+    termsNext: 'ቀጣይ ▶',
+    termsAcceptance: '"ተቀብያለሁ" የሚለውን ቁልፍ በመጫን ከላይ የተገለጹትን ሁሉንም ውሎችና ሁኔታዎች እንደተስማሙባቸው ያረጋግጣሉ።',
+    termsRead: 'ሁሉንም ውሎች አንብቤ ተረድቻለሁ።',
+    termsDeclineMsg: 'ለመቀጠል ውሎችና ሁኔታዎቹን መቀበል አለብዎት።',
+
+    // Registration Complete
+    regComplete: '✅ ምዝገባ ተጠናቀቀ!',
+    regWelcome: '🎉 ወደ አለ ቅርጫ እንኳን በደህና መጡ!',
+    regSuccess: 'መለያዎ በተሳካ ሁኔታ ተፈጥሯል።',
+    yourDetails: '👤 የእርስዎ ዝርዝሮች',
+    customerId: 'የደንበኛ መለያ',
+    name: 'ስም',
+    phone: 'ስልክ',
+    language: 'ቋንቋ',
+    registrationDate: 'የምዝገባ ቀን',
+    status: 'ሁኔታ',
+    whatsNext: '📋 ቀጣይ ምን?',
+    whatsNext1: '• ያሉ የቅርጫ ቡድኖችን ይመልከቱ',
+    whatsNext2: '• ቡድን ይቀላቀሉ እና ትዕዛዝ ያስገቡ',
+    whatsNext3: '• ትዕዛዞችዎንና ክፍያዎችዎን ይከታተሉ',
+    whatsNext4: '• ብቁ በሆኑ ሁኔታዎች ተመላሽ ገንዘብ ይጠይቁ',
+    getStarted: '🚀 ይጀምሩ',
+    goMainMenu: '🏠 ወደ ዋና ምናሌ',
+    viewAvailable: '🛒 ያሉ የቅርጫ ቡድኖች',
+
+    // Errors
+    invalidName: 'እባክዎ ትክክለኛ ስም ያስገቡ። (ከ2-100 ፊደላት)',
+    invalidPhone: 'እባክዎ ትክክለኛ የኢትዮጵያ ስልክ ቁጥር ያስገቡ። (ለምሳሌ 0911123456)',
+    invalidAddress: 'አድራሻው ከ5 እስከ 200 ቁምፊዎች መካከል መሆን አለበት።',
+    phoneExists: 'ይህ ስልክ ቁጥር ቀድሞውንም ተመዝግቧል። እባክዎ ይግቡ።',
+    mustAcceptTerms: 'ለመቀጠል ውሎችና ሁኔታዎቹን መቀበል አለብዎት።',
+    networkError: '❌ የአውታረ መረብ ችግር። እባክዎ እንደገና ይሞክሩ።',
+    error: '❌ ችግር ተፈጥሯል። እባክዎ እንደገና ይሞክሩ።',
+  }
+};
+
+// ============================================================
+// HELPERS
+// ============================================================
+
+function t(ctx: MyContext, key: string): string {
+  const lang = ctx.session.language || 'en';
+  return (i18n[lang] as any)[key] || key;
+}
+
+async function apiCall(endpoint: string, options: any = {}, ctx?: MyContext) {
+  const headers: any = {
+    'Content-Type': 'application/json',
+    ...options.headers,
+  };
+  if (ctx?.from?.id) {
+    headers['x-telegram-id'] = ctx.from?.id.toString();
+  }
+  const response = await fetch(`${API_URL}${endpoint}`, {
+    ...options,
+    headers,
+  });
+  return response.json();
+}
+
+async function checkUserRegistration(ctx: MyContext): Promise<boolean> {
+  if (ctx.session.isRegistered && ctx.session.customerId) return true;
+  try {
+    const data = await apiCall('/api/v1/customers/me', {}, ctx);
+    if (data.success && data.data) {
+      ctx.session.isRegistered = true;
+      ctx.session.customerId = data.data.id;
+      ctx.session.language = data.data.preferredLanguage || 'en';
+      ctx.session.phoneNumber = data.data.user?.phone || null;
+      return true;
+    }
+  } catch (error) {}
+  return false;
+}
+
+function formatCurrency(amount: number): string {
+  return `${amount.toLocaleString()} ETB`;
+}
+
+// ============================================================
+// TERMS CONTENT
+// ============================================================
+
+const termsContent = [
+  { en: '1. PARTIES\n\nParty One: Ale Kircha / Operating Company\n\nParty Two: Registered Customer/User', am: '1. ወገኖች\n\nአንደኛ ወገን፦ አለ ቅርጫ / አስተዳዳሪ ኩባንያ\n\nሁለተኛ ወገን፦ የተመዘገበ ደንበኛ/ተጠቃሚ' },
+  { en: '2. AGREEMENT DATE\n\nThe system automatically records:\n• Terms Accepted Date\n• Terms Accepted Time\n• Terms Version', am: '2. የስምምነት ቀን\n\nስርዓቱ በራስ-ሰር ይመዘግባል፦\n• ውሎች የተቀበሉበት ቀን\n• ውሎች የተቀበሉበት ሰዓት\n• የውሎች ስሪት' },
+  { en: '3. PURPOSE\n\nAle Kircha is a digital platform for organized traditional Ethiopian meat-sharing groups.', am: '3. ዓላማ\n\nአለ ቅርጫ በባህላዊ የኢትዮጵያ የስጋ መጋሪያ ቡድኖች ላይ የተመሰረተ ዲጂታል መድረክ ነው።' },
+  { en: '4. ELIGIBILITY\n\n• Must be 18 years or older\n• Valid Ethiopian phone number\n• Valid Telegram account', am: '4. ብቃት\n\n• ዕድሜዎ ከ18 ዓመት በላይ መሆን አለበት\n• ትክክለኛ የኢትዮጵያ ስልክ ቁጥር\n• ትክክለኛ የቴሌግራም መለያ' },
+  { en: '5. REGISTRATION OBLIGATIONS\n\nCustomers must provide accurate, complete, and current information.', am: '5. የምዝገባ ግዴታዎች\n\nደንበኞች ትክክለኛ፣ ሙሉ እና ወቅታዊ መረጃ መስጠት አለባቸው።' },
+  { en: '6. GROUP PARTICIPATION\n\nCustomers may join available Kircha groups and reserve portions subject to capacity.', am: '6. የቡድን ተሳትፎ\n\nደንበኞች የሚገኙ የቅርጫ ቡድኖችን መቀላቀል እና የሚፈልጉትን ድርሻ መያዝ ይችላሉ።' },
+  { en: '7. ORDERS\n\nOrders are confirmed only after payment verification.', am: '7. ትዕዛዞች\n\nትዕዛዞች የሚረጋገጡት ከክፍያ ማረጋገጫ በኋላ ብቻ ነው።' },
+  { en: '8. PAYMENTS\n\nAll payments must be made through approved payment methods.', am: '8. ክፍያዎች\n\nሁሉም ክፍያዎች በተፈቀዱ የክፍያ መንገዶች መፈጸም አለባቸው።' },
+  { en: '9. REFUNDS\n\nRefunds are processed according to the applicable refund policy.', am: '9. ተመላሽ ገንዘብ\n\nተመላሽ ገንዘብ በሚመለከተው ፖሊሲ መሰረት ይከናወናል።' },
+  { en: '10. PRIVACY\n\nCustomer data is protected according to our Privacy Policy.', am: '10. ግላዊነት\n\nየደንበኛ መረጃ በግላዊነት ፖሊሲያችን መሰረት ይጠበቃል።' },
+  { en: '11. CUSTOMER ACCEPTANCE\n\nBy clicking "I Accept", you agree to all the terms and conditions outlined above.', am: '11. የደንበኛ ተቀባይነት\n\n"ተቀብያለሁ" የሚለውን ቁልፍ በመጫን ከላይ የተገለጹትን ሁሉንም ውሎችና ሁኔታዎች እንደተስማሙባቸው ያረጋግጣሉ።' },
+  { en: '12. CONTACT\n\nFor questions: support@alekircha.com', am: '12. መገኛ\n\nለጥያቄዎች፦ support@alekircha.com' },
+];
+
+// ============================================================
+// TERMS CAROUSEL CONVERSATION
+// ============================================================
+
+async function termsCarouselConversation(conversation: any, ctx: MyContext) {
+  const lang = ctx.session.language || 'en';
+  const totalPages = termsContent.length;
+  let currentPage = 0;
+
+  while (true) {
+    const content = termsContent[currentPage];
+    const pageText = lang === 'en' ? content.en : content.am;
+    const pageLabel = t(ctx, 'termsPage');
+    
+    const keyboard: any = {
+      inline_keyboard: []
+    };
+
+    // Previous button
+    if (currentPage > 0) {
+      keyboard.inline_keyboard.push([{ text: '◀ ' + t(ctx, 'termsPrevious'), callback_data: 'terms_prev' }]);
+    }
+
+    // Next button
+    if (currentPage < totalPages - 1) {
+      if (currentPage > 0) {
+        // If we already have a row with Prev, add Next to same row
+        if (keyboard.inline_keyboard.length > 0) {
+          keyboard.inline_keyboard[0].push({ text: t(ctx, 'termsNext') + ' ▶', callback_data: 'terms_next' });
+        } else {
+          keyboard.inline_keyboard.push([{ text: t(ctx, 'termsNext') + ' ▶', callback_data: 'terms_next' }]);
+        }
+      } else {
+        keyboard.inline_keyboard.push([{ text: t(ctx, 'termsNext') + ' ▶', callback_data: 'terms_next' }]);
+      }
+    }
+
+    // Page indicator
+    keyboard.inline_keyboard.push([{ text: `📌 ${pageLabel} ${currentPage + 1}/${totalPages}`, callback_data: 'terms_page' }]);
+
+    // Accept/Decline on last page
+    if (currentPage === totalPages - 1) {
+      keyboard.inline_keyboard.push([
+        { text: '✅ ' + t(ctx, 'termsAccept'), callback_data: 'terms_accept' },
+        { text: '❌ ' + t(ctx, 'termsDecline'), callback_data: 'terms_decline' }
+      ]);
+    }
+
+    await ctx.reply(
+      `📜 *${t(ctx, 'termsTitle')}*\n\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `📌 ${pageLabel} ${currentPage + 1}/${totalPages}\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+      `${pageText}\n\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `📖 ${t(ctx, 'termsPage')} ${currentPage + 1}/${totalPages}`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: keyboard,
+      }
+    );
+
+    const result = await conversation.waitForCallbackQuery(['terms_prev', 'terms_next', 'terms_accept', 'terms_decline', 'terms_page']);
+    await result.answerCallbackQuery();
+
+    if (result.callbackQuery.data === 'terms_prev' && currentPage > 0) {
+      currentPage--;
+    } else if (result.callbackQuery.data === 'terms_next' && currentPage < totalPages - 1) {
+      currentPage++;
+    } else if (result.callbackQuery.data === 'terms_accept') {
+      ctx.session.data.termsAccepted = true;
+      ctx.session.data.termsVersion = 'v1.0';
+      return true;
+    } else if (result.callbackQuery.data === 'terms_decline') {
+      return false;
+    }
+  }
+}
+
+// ============================================================
+// REGISTRATION CONVERSATION
+// ============================================================
+
+async function registrationConversation(conversation: any, ctx: MyContext) {
+  const lang = ctx.session.language || 'en';
+  
+  // Step 1: Full Name
+  await ctx.reply(
+    `${t(ctx, 'registrationTitle')}\n\n` +
+    `${t(ctx, 'personalInfo')}\n\n` +
+    `${t(ctx, 'fullName')}`,
+    { parse_mode: 'Markdown' }
+  );
+  
+  const nameResult = await conversation.waitFor(':text');
+  if (!nameResult.message?.text || nameResult.message.text.length < 2) {
+    await ctx.reply(t(ctx, 'invalidName'));
+    return;
+  }
+  ctx.session.data.firstName = nameResult.message.text;
+
+  // Step 2: Address (Optional)
+  await ctx.reply(
+    `${t(ctx, 'registrationTitle')}\n\n` +
+    `${t(ctx, 'address')}`,
+    { parse_mode: 'Markdown' }
+  );
+  
+  const addressResult = await conversation.waitFor(':text');
+  if (addressResult.message?.text) {
+    ctx.session.data.address = addressResult.message.text;
+  }
+
+  // Step 3: Additional Contact (Optional)
+  await ctx.reply(
+    `${t(ctx, 'registrationTitle')}\n\n` +
+    `${t(ctx, 'additionalContact')}`,
+    { parse_mode: 'Markdown' }
+  );
+  
+  const contactResult = await conversation.waitFor(':text');
+  if (contactResult.message?.text) {
+    ctx.session.data.additionalContact = contactResult.message.text;
+  }
+
+  // Step 4: Terms & Conditions
+  const termsAccepted = await termsCarouselConversation(conversation, ctx);
+  if (!termsAccepted) {
+    await ctx.reply(t(ctx, 'mustAcceptTerms'));
+    return;
+  }
+
+  // Step 5: Submit Registration
+  await ctx.reply('⏳ ' + (lang === 'en' ? 'Creating your account...' : 'መለያዎን በመፍጠር ላይ...'));
+
+  try {
+    const data = await apiCall(
+      '/api/v1/customers/register',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          telegramId: ctx.from?.id?.toString(),
+          username: ctx.from?.username || '',
+          firstName: ctx.session.data.firstName,
+          lastName: '',
+          phone: ctx.session.data.phone || ctx.session.phoneNumber || '',
+          fullName: ctx.session.data.firstName,
+          deliveryAddress: ctx.session.data.address || '',
+          additionalContact: ctx.session.data.additionalContact || '',
+          preferredLanguage: ctx.session.language || 'en',
+          termsAccepted: true,
+          termsVersion: ctx.session.data.termsVersion || 'v1.0',
+        }),
+      },
+      ctx
+    );
+
+    if (data.success) {
+      ctx.session.isRegistered = true;
+      ctx.session.customerId = data.data.customer?.id || data.data.user?.id;
+      
+      // Notify admin
+      try {
+        await apiCall('/api/v1/admin/notify', {
+          method: 'POST',
+          body: JSON.stringify({
+            type: 'CUSTOMER_REGISTERED',
+            title: '🔔 New Customer Registered',
+            message: `👤 New customer registered!\n\nCustomer ID: ${ctx.session.customerId}\nName: ${ctx.session.data.firstName}\nPhone: ${ctx.session.data.phone}\nTelegram: @${ctx.from?.username || 'N/A'}\nLanguage: ${ctx.session.language}`,
+            data: {
+              customerId: ctx.session.customerId,
+              firstName: ctx.session.data.firstName,
+              phone: ctx.session.data.phone,
+              telegramId: ctx.from?.id,
+              username: ctx.from?.username,
+              language: ctx.session.language
+            }
+          })
+        }, ctx);
+      } catch (error) {
+        console.error('Failed to notify admin:', error);
+      }
+
+      // Registration Complete
+      await ctx.reply(
+        `✅ *${t(ctx, 'regComplete')}*\n\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `🎉 ${t(ctx, 'regWelcome')}\n\n` +
+        `${t(ctx, 'regSuccess')}\n\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `👤 *${t(ctx, 'yourDetails')}*\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `📌 ${t(ctx, 'customerId')}: ${ctx.session.customerId || 'N/A'}\n` +
+        `📌 ${t(ctx, 'name')}: ${ctx.session.data.firstName}\n` +
+        `📌 ${t(ctx, 'phone')}: ${ctx.session.data.phone || 'N/A'}\n` +
+        `📌 ${t(ctx, 'language')}: ${ctx.session.language === 'en' ? 'English' : 'አማርኛ'}\n` +
+        `📌 ${t(ctx, 'registrationDate')}: ${new Date().toLocaleDateString()}\n` +
+        `📌 ${t(ctx, 'status')}: ACTIVE\n\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `📋 *${t(ctx, 'whatsNext')}*\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `${t(ctx, 'whatsNext1')}\n` +
+        `${t(ctx, 'whatsNext2')}\n` +
+        `${t(ctx, 'whatsNext3')}\n` +
+        `${t(ctx, 'whatsNext4')}\n\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `🚀 *${t(ctx, 'getStarted')}*\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '🏠 ' + t(ctx, 'goMainMenu'), callback_data: 'show_menu' }],
+              [{ text: '🛒 ' + t(ctx, 'viewAvailable'), callback_data: 'menu_groups' }],
+            ],
+          },
+        }
+      );
+    } else {
+      await ctx.reply(`❌ ${t(ctx, 'error')}: ${data.error?.message || 'Unknown error'}`);
+    }
+  } catch (error) {
+    await ctx.reply(`❌ ${t(ctx, 'networkError')}`);
+  }
+}
+
+// ============================================================
+// COMMANDS
+// ============================================================
+
+bot.command('start', async (ctx) => {
+  const isRegistered = await checkUserRegistration(ctx);
+  // If already registered, show welcome back
+  if (isRegistered && ctx.session.customerId) {
+    // Get customer stats
+    try {
+      const data = await apiCall('/api/v1/customers/me', {}, ctx);
+      const customer = data.data || {};
+      
+      await ctx.reply(
+        `✅ *${t(ctx, 'welcomeBack')}*\n\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `👋 ${t(ctx, 'accountFound')}\n\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `👤 *${t(ctx, 'yourAccount')}*\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `📌 ${t(ctx, 'customerId')}: ${customer.id || 'N/A'}\n` +
+        `📌 ${t(ctx, 'name')}: ${customer.fullName || 'N/A'}\n` +
+        `📌 ${t(ctx, 'phone')}: ${customer.user?.phone || 'N/A'}\n` +
+        `📌 ${t(ctx, 'status')}: ${customer.status || 'ACTIVE'}\n\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `📊 *${t(ctx, 'quickSummary')}*\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `${t(ctx, 'totalOrders')}: ${customer.totalOrders || 0}\n` +
+        `${t(ctx, 'completedOrders')}: ${customer.completedOrders || 0}\n` +
+        `${t(ctx, 'pendingOrders')}: ${customer.pendingOrders || 0}\n` +
+        `${t(ctx, 'refunds')}: ${customer.refunds || 0}\n` +
+        `${t(ctx, 'totalSpent')}: ${formatCurrency(customer.totalSpent || 0)}`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '🏠 ' + t(ctx, 'goDashboard'), callback_data: 'show_menu' }],
+              [{ text: '📋 ' + t(ctx, 'myOrders'), callback_data: 'menu_orders' }],
+            ],
+          },
+        }
+      );
+    } catch {
+      await ctx.reply(`👋 ${t(ctx, 'welcomeBack')}`, {
+        reply_markup: {
+          inline_keyboard: [[{ text: '🏠 ' + t(ctx, 'goDashboard'), callback_data: 'show_menu' }]],
+        },
+      });
+    }
+    return;
+  }
+
+  // New user - Show welcome screen
+  await ctx.reply(
+    `🥩 *${t(ctx, 'welcome')}*\n\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `📌 ${t(ctx, 'welcomeDesc')}\n\n` +
+    `${t(ctx, 'welcomeDesc2')}\n\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `${t(ctx, 'features')}\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `${t(ctx, 'feature1')}\n` +
+    `${t(ctx, 'feature2')}\n` +
+    `${t(ctx, 'feature3')}\n` +
+    `${t(ctx, 'feature4')}\n` +
+    `${t(ctx, 'feature5')}\n` +
+    `${t(ctx, 'feature6')}\n\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `🌐 *${t(ctx, 'selectLanguage')}*\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+    `${t(ctx, 'selectLanguageDesc')}`,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🇬🇧 English', callback_data: 'lang_en' }],
+          [{ text: '🇪🇹 አማርኛ', callback_data: 'lang_am' }],
+        ],
+      },
+    }
+  );
+});
+
+// ============================================================
+// LANGUAGE SELECTION
+// ============================================================
+
+bot.callbackQuery(/lang_(en|am)/, async (ctx) => {
+  const lang = ctx.match[1] as 'en' | 'am';
+  await ctx.answerCallbackQuery();
+  ctx.session.language = lang;
+
+  await ctx.reply(
+    `${t(ctx, 'languageSet')}\n\n` +
+    `${t(ctx, 'languageSetDesc')}\n\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `📱 *${t(ctx, 'phoneTitle')}*\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+    `${t(ctx, 'phoneDesc')}\n\n` +
+    `${t(ctx, 'phoneWhy')}\n` +
+    `${t(ctx, 'phoneWhy1')}\n` +
+    `${t(ctx, 'phoneWhy2')}\n` +
+    `${t(ctx, 'phoneWhy3')}\n` +
+    `${t(ctx, 'phoneWhy4')}\n` +
+    `${t(ctx, 'phoneWhy5')}\n\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `${t(ctx, 'phonePrivacy')}\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+    `${t(ctx, 'phonePrivacyDesc')}`,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        keyboard: [[{ text: '📱 ' + (lang === 'en' ? 'Share Phone Number' : 'ስልክ ቁጥር ያጋሩ'), request_contact: true }]],
+        resize_keyboard: true,
+        one_time_keyboard: true,
+      },
+    }
+  );
+});
+
+// ============================================================
+// PHONE NUMBER HANDLER
+// ============================================================
+
+bot.on('message:contact', async (ctx) => {
+  const contact = ctx.message.contact;
+  if (!contact) return;
+
+  // Verify the contact belongs to the user
+  if (contact.user_id !== ctx.from?.id) {
+    await ctx.reply('⚠️ Please share your own phone number.');
+    return;
+  }
+
+  ctx.session.data.phone = contact.phone_number;
+  ctx.session.phoneNumber = contact.phone_number;
+
+  await ctx.reply('✅ Phone number received!', {
+    reply_markup: { remove_keyboard: true },
+  });
+
+  // Check if user already exists
+  try {
+    const data = await apiCall(
+      '/api/v1/customers/check',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          phone: contact.phone_number,
+          telegramId: ctx.from?.id.toString(),
+        }),
+      },
+      ctx
+    );
+
+    if (data.success && data.data?.exists) {
+      // Existing user - show welcome back
+      ctx.session.isRegistered = true;
+      ctx.session.customerId = data.data.customerId;
+      await ctx.reply(`👋 Welcome back! Please use /menu to continue.`);
+      return;
+    }
+  } catch (error) {}
+
+  // New user - start registration
+  await ctx.reply('📝 Let\'s complete your registration.');
+  await ctx.conversation.enter('registration');
+});
+
+// ============================================================
+// REGISTER CONVERSATION
+// ============================================================
+
+bot.use(createConversation(registrationConversation, 'registration'));
+
+// ============================================================
+// MAIN MENU (Placeholder)
+// ============================================================
+
+bot.callbackQuery('show_menu', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply('🏠 *Main Menu*\n\nComing soon...', { parse_mode: 'Markdown' });
+});
+
+// ============================================================
+// START BOT
+// ============================================================
+
+console.log('🤖 Customer Bot is running...');
+console.log(`📊 API URL: ${API_URL}`);
+console.log(`🌐 Default Language: en`);
+
+bot.start({
+  allowed_updates: ['message', 'callback_query'],
+});
+
+// ============================================================
+// HEALTH CHECK SERVER
+// ============================================================
+
+http.createServer((req, res) => {
+  if (req.url === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      status: 'ok',
+      service: 'customer-bot',
+      port: PORT,
+      timestamp: new Date().toISOString()
+    }));
+  } else {
+    res.writeHead(404);
+    res.end('Not Found');
+  }
+}).listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ Health check: http://localhost:${PORT}/health`);
+});
+
+console.log(`🔗 Health check: http://localhost:${PORT}/health`);
+
+// ============================================================
+// TERMS & CONDITIONS CAROUSEL
+// ============================================================
+
+import { termsPages } from './termsContent.js';
+
+async function termsCarouselConversation(conversation: any, ctx: MyContext) {
+  const lang = ctx.session.language || 'en';
+  const totalPages = termsPages.length;
+  let currentPage = 0;
+
+  while (true) {
+    const content = termsPages[currentPage];
+    const pageText = lang === 'en' ? content.en : content.am;
+    const pageLabel = t(ctx, 'termsPage');
+    
+    const keyboard: any = {
+      inline_keyboard: []
+    };
+
+    // Previous button
+    if (currentPage > 0) {
+      keyboard.inline_keyboard.push([{ text: '◀ ' + t(ctx, 'termsPrevious'), callback_data: 'terms_prev' }]);
+    }
+
+    // Next button
+    if (currentPage < totalPages - 1) {
+      if (keyboard.inline_keyboard.length > 0) {
+        keyboard.inline_keyboard[0].push({ text: t(ctx, 'termsNext') + ' ▶', callback_data: 'terms_next' });
+      } else {
+        keyboard.inline_keyboard.push([{ text: t(ctx, 'termsNext') + ' ▶', callback_data: 'terms_next' }]);
+      }
+    }
+
+    // Page indicator
+    keyboard.inline_keyboard.push([{ text: `📌 ${pageLabel} ${currentPage + 1}/${totalPages}`, callback_data: 'terms_page' }]);
+
+    // Accept/Decline on last page
+    if (currentPage === totalPages - 1) {
+      keyboard.inline_keyboard.push([
+        { text: '✅ ' + t(ctx, 'termsAccept'), callback_data: 'terms_accept' },
+        { text: '❌ ' + t(ctx, 'termsDecline'), callback_data: 'terms_decline' }
+      ]);
+    }
+
+    await ctx.reply(
+      `${pageText}\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `📖 ${pageLabel} ${currentPage + 1}/${totalPages}`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: keyboard,
+      }
+    );
+
+    const result = await conversation.waitForCallbackQuery(['terms_prev', 'terms_next', 'terms_accept', 'terms_decline', 'terms_page']);
+    await result.answerCallbackQuery();
+
+    if (result.callbackQuery.data === 'terms_prev' && currentPage > 0) {
+      currentPage--;
+    } else if (result.callbackQuery.data === 'terms_next' && currentPage < totalPages - 1) {
+      currentPage++;
+    } else if (result.callbackQuery.data === 'terms_accept') {
+      ctx.session.data.termsAccepted = true;
+      ctx.session.data.termsVersion = 'v1.0';
+      return true;
+    } else if (result.callbackQuery.data === 'terms_decline') {
+      return false;
+    }
+  }
+}
+
+// ============================================================
+// FAQ HANDLER
+// ============================================================
+
+import { faqs } from './faqContent.js';
+
+bot.callbackQuery('menu_faq', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const lang = ctx.session.language || 'en';
+  let msg = '❓ *' + t(ctx, 'faqTitle') + '*\n\n';
+  
+  for (const category of faqs) {
+    msg += `📂 *${category.category}*\n`;
+    for (const q of category.questions) {
+      const question = lang === 'en' ? q.en : q.am;
+      msg += `  • ${question}\n`;
+    }
+    msg += '\n';
+  }
+  
+  msg += '\n📞 ' + t(ctx, 'contactUs') + ': @AleKirchaAdmin';
+  
+  await ctx.reply(msg, {
+    parse_mode: 'Markdown',
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '☎ ' + t(ctx, 'contactUs'), callback_data: 'menu_contact' }],
+        [{ text: '🔙 ' + t(ctx, 'back'), callback_data: 'show_menu' }],
+      ],
+    },
+  });
+});
+
+// ============================================================
+// SELF-HELP & TROUBLESHOOTING
+// ============================================================
+
+bot.callbackQuery('menu_selfhelp', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const lang = ctx.session.language || 'en';
+  
+  const content = lang === 'en' ? {
+    title: '🆘 SELF HELP & TROUBLESHOOTING',
+    guides: [
+      '📖 HOW TO JOIN A KIRCHA GROUP\n\n1. Open app and go to Home\n2. Select animal type: Ox/Sheep/Goat\n3. Browse active groups\n4. Select Quota: FULL/HALF/QUARTER\n5. Tap "Reserve Quota" to confirm',
+      '📖 HOW TO SUBMIT PAYMENT ADVICE\n\n1. Make payment via bank/Telebirr\n2. Screenshot the transaction\n3. Go to My Orders > Pending Payment\n4. Click "Upload Payment Advice"\n5. Attach screenshot and submit'
+    ],
+    troubleshooting: [
+      '🔧 ISSUE: Payment Advice Rejected\nSolution: Upload clear screenshot showing Transaction ID, Date, and Exact Amount',
+      '🔧 ISSUE: SMS OTP Not Received\nSolution: Ensure phone format is 09XXXXXXXX, wait 60s, click "Resend OTP"',
+      '🔧 ISSUE: Delivery Delayed\nSolution: Ensure phone is on, check Order Status, verify address is correct'
+    ]
+  } : {
+    title: '🆘 እርዳታ እና ችግር መፍቻ',
+    guides: [
+      '📖 የቅርጫ ቡድን እንዴት እንደሚቀላቀሉ\n\n1. መተግበሪያውን ከፍተው ወደ ዋና ገጽ ይሂዱ\n2. የእንስሳ ዓይነት ይምረጡ: በሬ/በግ/ፍየል\n3. ንቁ ቡድኖችን ይመልከቱ\n4. ድርሻ ይምረጡ: ሙሉ/ግማሽ/ሩብ\n5. "ድርሻ ይያዙ" የሚለውን ተጭነው ያረጋግጡ',
+      '📖 የክፍያ ማስረጃ እንዴት እንደሚጫን\n\n1. በባንክ/ቴሌብር ክፍያ ይፈጽሙ\n2. ደረሰኙን ስክሪንሾት ያድርጉ\n3. ወደ ትዕዛዞቼ > ያልተረጋገጡ ክፍያዎች ይሂዱ\n4. "የክፍያ ማስረጃ ጫን" ይጫኑ\n5. ስክሪንሾቱን በማያያዝ ያስገቡ'
+    ],
+    troubleshooting: [
+      '🔧 ችግር፦ የክፍያ ማስረጃ አልተቀበለም\nመፍትሔ፦ ግልጽ ስክሪንሾት ያስገቡ (የግብይት ቁጥር፣ ቀን፣ መጠን)',
+      '🔧 ችግር፦ የኤስኤምኤስ ኦቲፒ አልመጣም\nመፍትሔ፦ የስልክ ቁጥር ቅርጸት 09XXXXXXXX መሆኑን ያረጋግጡ፣ 60ሰ ይጠብቁ፣ "እንደገና ላክ" ይጫኑ',
+      '🔧 ችግር፦ ርክክብ ዘገየ\nመፍትሔ፦ ስልክ ክፍት መሆኑን ያረጋግጡ፣ የትዕዛዝ ሁኔታን ይመልከቱ፣ አድራሻ ትክክል መሆኑን ያረጋግጡ'
+    ]
+  };
+  
+  let msg = `*${content.title}*\n\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+  msg += `📖 *GUIDES*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  for (const guide of content.guides) {
+    msg += `${guide}\n\n`;
+  }
+  msg += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+  msg += `🔧 *TROUBLESHOOTING*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  for (const issue of content.troubleshooting) {
+    msg += `${issue}\n\n`;
+  }
+  msg += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+  msg += `📞 ${t(ctx, 'contactUs')}: @AleKirchaAdmin`;
+  
+  await ctx.reply(msg, {
+    parse_mode: 'Markdown',
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '☎ ' + t(ctx, 'contactUs'), callback_data: 'menu_contact' }],
+        [{ text: '🔙 ' + t(ctx, 'back'), callback_data: 'show_menu' }],
+      ],
+    },
+  });
+});

@@ -30,7 +30,7 @@ export class KirchaController {
     const groups = await prisma.kirchaGroup.findMany({
       where: {
         status: 'OPEN',
-        totalCapacity: { gt: 0 },
+        maxQuota: { gt: 0 },
         registrationCloseAt: { gt: new Date() }
       },
       include: {
@@ -75,19 +75,19 @@ export class KirchaController {
       data: {
         groupCode,
         kirchaTypeId: body.kirchaTypeId,
-        nameEn: body.nameEn,
+        name: body.nameEn,
         nameAm: body.nameAm || body.nameEn,
         descriptionEn: body.descriptionEn,
         descriptionAm: body.descriptionAm,
         status: body.status || 'DRAFT',
-        totalCapacity: body.totalCapacity || 0,
+        maxQuota: body.maxQuota || 0,
         unitPrice: body.unitPrice || 0,
         halfPrice: body.halfPrice || null,
         quarterPrice: body.quarterPrice || null,
         deliveryFee: body.deliveryFee || 0,
         discount: body.discount || 0,
         tax: body.tax || 0,
-        additionalFees: body.additionalFees || 0,
+        additionalFee: body.additionalFee || 0,
         registrationOpenAt: body.registrationOpenAt || new Date(),
         registrationCloseAt: body.registrationCloseAt || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
         slaughterDate: body.slaughterDate || null,
@@ -151,7 +151,7 @@ export class KirchaController {
       if (!group) throw new NotFoundError('Kircha group');
       if (group.status !== 'OPEN') throw new ConflictError('Group is not open');
 
-      const available = group.totalCapacity - group.reservedQuantity - group.soldQuantity;
+      const available = group.maxQuota - group.reservedQuota - group.soldQuota;
       if (quantity > available) throw new ConflictError('Not enough capacity');
 
       const unitPrice = portionType === 'HALF' ? (group.halfPrice || group.unitPrice / 2) :
@@ -159,7 +159,7 @@ export class KirchaController {
                         group.unitPrice;
 
       const subtotal = unitPrice * quantity;
-      const totalAmount = subtotal + group.deliveryFee + group.additionalFees - group.discount + group.tax;
+      const totalAmount = subtotal + group.deliveryFee + group.additionalFee - group.discount + group.tax;
 
       const membership = await tx.kirchaGroupMembership.create({
         data: {
@@ -171,7 +171,7 @@ export class KirchaController {
           subtotal,
           discount: group.discount,
           deliveryFee: group.deliveryFee,
-          additionalFees: group.additionalFees,
+          additionalFee: group.additionalFee,
           tax: group.tax,
           totalAmount,
           reservationStatus: 'RESERVED'
@@ -180,7 +180,7 @@ export class KirchaController {
 
       await tx.kirchaGroup.update({
         where: { id },
-        data: { reservedQuantity: group.reservedQuantity + quantity }
+        data: { reservedQuota: group.reservedQuota + quantity }
       });
 
       return membership;
@@ -210,7 +210,7 @@ export class KirchaController {
       if (oldGroup) {
         await tx.kirchaGroup.update({
           where: { id: fromGroupId },
-          data: { reservedQuantity: oldGroup.reservedQuantity - (quantity || membership.quantity) }
+          data: { reservedQuota: oldGroup.reservedQuota - (quantity || membership.quantity) }
         });
       }
 
@@ -227,16 +227,16 @@ export class KirchaController {
           subtotal: (quantity || membership.quantity) * newGroup.unitPrice,
           discount: newGroup.discount,
           deliveryFee: newGroup.deliveryFee,
-          additionalFees: newGroup.additionalFees,
+          additionalFee: newGroup.additionalFee,
           tax: newGroup.tax,
-          totalAmount: (quantity || membership.quantity) * newGroup.unitPrice + newGroup.deliveryFee + newGroup.additionalFees - newGroup.discount + newGroup.tax,
+          totalAmount: (quantity || membership.quantity) * newGroup.unitPrice + newGroup.deliveryFee + newGroup.additionalFee - newGroup.discount + newGroup.tax,
           reservationStatus: 'RESERVED'
         }
       });
 
       await tx.kirchaGroup.update({
         where: { id: toGroupId },
-        data: { reservedQuantity: newGroup.reservedQuantity + (quantity || membership.quantity) }
+        data: { reservedQuota: newGroup.reservedQuota + (quantity || membership.quantity) }
       });
 
       return newMembership;

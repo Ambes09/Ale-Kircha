@@ -1,0 +1,119 @@
+export const en = {
+  // Common
+  welcome: '🥩 Welcome to Ale Kircha!',
+  chooseLanguage: 'Please select your language:',
+  languageSet: '✅ Language set!',
+  mainMenu: '📋 Main Menu',
+  chooseOption: 'Choose an option:',
+  back: '◀️ Back',
+  cancel: '❌ Cancel',
+  confirm: '✅ Confirm',
+  continue: '➡️ Continue',
+  skip: '⏭️ Skip',
+  error: '❌ Something went wrong. Please try again.',
+  networkError: '❌ Network error. Please check your connection.',
+  loading: '⏳ Loading...',
+
+  // Registration
+  registration: '📝 Registration',
+  registrationComplete: '🎉 Registration Complete! Welcome to Ale Kircha!',
+  phoneRequest: '📱 Please share your Telegram phone number to continue.',
+  firstName: '👤 What is your first name?',
+  lastName: '👤 What is your last name?',
+  address: '📍 Please enter your delivery address:',
+  additionalContact: '📞 Would you like to provide an additional contact number? (Optional)',
+  review: '📋 Please review your information:',
+  terms: '📄 Please review and accept our Terms & Services:',
+  termsAccept: '✅ I accept the Terms & Services',
+  privacyAccept: '✅ I accept the Privacy Policy',
+
+  // Dashboard
+  dashboard: '🏠 Dashboard',
+  hello: '👋 Hello',
+  activeGroups: 'Active Groups',
+  myOrders: '📦 My Orders',
+  myProfile: '👤 My Profile',
+  helpSupport: '❓ Help & Support',
+
+  // Groups
+  groups: '🥩 Kircha Groups',
+  noGroups: '🥩 No active Kircha groups available.\n\nWould you like to create a new Kircha?',
+  createGroup: '🥩 Create New Kircha',
+  groupDetails: '📋 Group Details',
+  joinGroup: '👥 Join Group',
+  groupFull: '⚠️ This group is full.',
+  groupClosed: '⚠️ This group is closed.',
+
+  // Orders
+  orders: '📦 My Orders',
+  noOrders: 'No orders found.',
+  orderDetails: '📋 Order Details',
+  orderNumber: 'Order #',
+  orderStatus: 'Status',
+  orderTotal: 'Total',
+  orderTimeline: '📅 Order Timeline',
+
+  // Payment
+  payment: '💳 Payment',
+  paymentMethod: 'Select Payment Method:',
+  paymentInstructions: '📋 Payment Instructions',
+  paymentProof: '📷 Payment Proof',
+  paymentProofUpload: 'Please upload a clear screenshot/photo of your payment receipt.',
+  paymentPending: '⏳ Payment Under Review',
+  paymentApproved: '✅ Payment Confirmed!',
+  paymentRejected: '❌ Payment Rejected',
+
+  // Refund
+  refund: '↩️ Refund',
+  refundRequest: '↩️ Request Refund',
+  refundEligible: 'Select an eligible order:',
+  refundCalculation: '📊 Refund Calculation',
+  refundBankDetails: '🏦 Enter refund bank details:',
+  refundSubmitted: '⏳ Refund Request Submitted',
+  refundApproved: '✅ Refund Approved',
+  refundCompleted: '✅ Refund Completed',
+  refundRejected: '❌ Refund Rejected',
+
+  // Support
+  support: '💬 Contact Support',
+  supportCategory: 'Select an issue category:',
+  supportMessage: 'Please describe your issue:',
+  supportSubmit: '📤 Submit Ticket',
+  supportTicket: '🎫 Support Ticket',
+  supportResponse: '📩 Support Response',
+
+  // Profile
+  profile: '👤 My Profile',
+  editProfile: '✏️ Edit Profile',
+  addresses: '📍 Addresses',
+  addAddress: '➕ Add Address',
+  deleteAddress: '🗑️ Delete Address',
+
+  // Settings
+  settings: '⚙️ Settings',
+  language: '🌐 Language',
+  notifications: '🔔 Notifications',
+  privacy: '🔐 Privacy',
+  termsService: '📄 Terms & Services',
+  about: 'ℹ️ About',
+
+  // Notifications
+  notification: '🔔 Notification',
+  orderCreated: '📦 Order created',
+  paymentSubmitted: '💰 Payment submitted',
+  paymentApproved: '✅ Payment approved',
+  orderPreparing: '🍖 Order preparing',
+  orderOutForDelivery: '🚚 Order out for delivery',
+  orderDelivered: '🎉 Order delivered',
+  refundSubmitted: '↩️ Refund submitted',
+  refundApproved: '✅ Refund approved',
+  refundCompleted: '✅ Refund completed',
+
+  // FAQ
+  faqTitle: '❓ FAQ',
+  faq1: '1️⃣ How do I join a group?',
+  faq2: '2️⃣ How do I place an order?',
+  faq3: '3️⃣ How do I pay?',
+  faq4: '4️⃣ How do I request a refund?',
+  faq5: '5️⃣ How do I contact support?',
+};

@@ -1,0 +1,834 @@
+import { Bot, session, Context, SessionFlavor } from 'grammy';
+import { conversations, ConversationFlavor, createConversation } from '@grammyjs/conversations';
+import dotenv from 'dotenv';
+import http from 'http';
+
+dotenv.config();
+
+interface SessionData {
+  language: 'en' | 'am';
+  step: string;
+  isRegistered: boolean;
+  customerId: string | null;
+  data: {
+    firstName?: string;
+    lastName?: string;
+    address?: string;
+    additionalContact?: string;
+    phone?: string;
+    termsAccepted?: boolean;
+  };
+}
+
+type MyContext = Context & SessionFlavor<SessionData> & ConversationFlavor;
+
+const API_URL = process.env.API_URL || 'http://localhost:4000';
+const BOT_TOKEN = process.env.CUSTOMER_BOT_TOKEN;
+const PORT = parseInt(process.env.PORT || '10001');
+
+if (!BOT_TOKEN) { console.error('❌ Token required'); process.exit(1); }
+
+const bot = new Bot<MyContext>(BOT_TOKEN);
+
+// Session
+bot.use(session({
+  initial: (): SessionData => ({
+    language: 'en',
+    step: 'start',
+    isRegistered: false,
+    customerId: null,
+    data: {},
+  }),
+}));
+
+bot.use(conversations());
+
+// Translations
+function t(ctx: MyContext, key: string): string {
+  const lang = ctx.session.language || 'en';
+  const tr: Record<string, Record<string, string>> = {
+    en: {
+      welcome: '🥩 Welcome to Ale Kircha!',
+      desc: 'Join organized meat-sharing groups and order fresh meat conveniently.',
+      chooseLang: 'Please select your language:',
+      langSet: '✅ Language set!',
+      phoneReq: '📱 Please share your Telegram phone number to continue:',
+      phoneRecv: '✅ Phone number received! Let\'s complete your registration.',
+      firstName: '👤 What is your first name?',
+      lastName: '👤 What is your last name?',
+      address: '📍 Please enter your delivery address:',
+      addContact: '📞 Would you like to provide an additional contact number? (Optional)',
+      enterContact: '📞 Please enter the additional contact number:',
+      terms: '📄 Please review and accept our Terms & Services:',
+      accept: '✅ I accept',
+      regComplete: '🎉 Registration Complete! Welcome to Ale Kircha!',
+      menu: '📋 Main Menu',
+      choose: 'Choose an option:',
+      groups: '🥩 Available Kircha',
+      orders: '🛒 My Orders',
+      profile: '👤 My Profile',
+      refunds: '↩️ Refunds',
+      help: '❓ Help',
+      contact: '☎ Contact Us',
+      settings: '⚙️ Settings',
+      back: '🔙 Back',
+      existing: '👋 Welcome back!',
+      error: '❌ Something went wrong. Please try again.',
+      network: '❌ Network error. Please try again later.',
+    },
+    am: {
+      welcome: '🥩 እንኳን ወደ አለ ቅርጫ በደህና መጡ!',
+      desc: 'በተደራጀ የቅርጫ ቡድን ትኩስ ሥጋን በቀላሉ ያዙ።',
+      chooseLang: 'እባክዎ ቋንቋዎን ይምረጡ:',
+      langSet: '✅ ቋንቋ ተቀየረ!',
+      phoneReq: '📱 እባክዎ የቴሌግራም ስልክ ቁጥርዎን ያጋሩ:',
+      phoneRecv: '✅ ስልክ ቁጥር ተቀብለናል! ምዝገባዎን እንጨርስ።',
+      firstName: '👤 የመጀመሪያ ስምዎ ማን ነው?',
+      lastName: '👤 የአባት ስምዎ ማን ነው?',
+      address: '📍 እባክዎ የማድረሻ አድራሻዎን ያስገቡ:',
+      addContact: '📞 ተጨማሪ የመገኛ ስልክ ቁጥር ማስገባት ይፈልጋሉ? (አማራጭ)',
+      enterContact: '📞 እባክዎ ተጨማሪ የመገኛ ስልክ ቁጥሩን ያስገቡ:',
+      terms: '📄 እባክዎ የአገልግሎት ውሎቻችንን ይመልከቱ እና ይቀበሉ:',
+      accept: '✅ ተቀብያለሁ',
+      regComplete: '🎉 ምዝገባዎ ተጠናቋል! እንኳን ወደ አለ ቅርጫ በደህና መጡ!',
+      menu: '📋 ዋና ምናሌ',
+      choose: 'አማራጭ ይምረጡ:',
+      groups: '🥩 ያሉ የስጋ ቅርጫዎች',
+      orders: '🛒 የእኔ ትዕዛዞች',
+      profile: '👤 የእኔ መገለጫ',
+      refunds: '↩️ ተመላሽ ገንዘብ',
+      help: '❓ እገዛ',
+      contact: '☎ ያግኙን',
+      settings: '⚙️ ቅንብሮች',
+      back: '🔙 ተመለስ',
+      existing: '👊 እንኳን በደህና ተመለሱ!',
+      error: '❌ ችግር ተፈጥሯል። እባክዎ እንደገና ይሞክሩ።',
+      network: '❌ የአውታረ መረብ ችግር። እባክዎ እንደገና ይሞክሩ።',
+    }
+  };
+  return (tr[lang] as any)[key] || key;
+}
+
+async function apiCall(endpoint: string, options: any = {}, ctx?: MyContext) {
+  const headers: any = { 'Content-Type': 'application/json' };
+  if (ctx?.from?.id) headers['x-telegram-id'] = ctx.from.id.toString();
+  const res = await fetch(`${API_URL}${endpoint}`, { ...options, headers });
+  return res.json();
+}
+
+async function checkUser(ctx: MyContext): Promise<boolean> {
+  if (ctx.session.isRegistered) return true;
+  try {
+    const data = await apiCall('/api/v1/customers/me', {}, ctx);
+    if (data.success && data.data) {
+      ctx.session.isRegistered = true;
+      ctx.session.customerId = data.data.id;
+      ctx.session.language = data.data.preferredLanguage || 'en';
+      return true;
+    }
+  } catch {}
+  return false;
+}
+
+// ============================================================
+// REGISTRATION CONVERSATION
+// ============================================================
+
+async function registrationConversation(conversation: any, ctx: MyContext) {
+  // First Name
+  await ctx.reply(t(ctx, 'firstName'));
+  const fn = await conversation.waitFor(':text');
+  if (!fn.message?.text) { await ctx.reply(t(ctx, 'error')); return; }
+  ctx.session.data.firstName = fn.message.text;
+
+  // Last Name
+  await ctx.reply(t(ctx, 'lastName'));
+  const ln = await conversation.waitFor(':text');
+  if (!ln.message?.text) { await ctx.reply(t(ctx, 'error')); return; }
+  ctx.session.data.lastName = ln.message.text;
+
+  // Address
+  await ctx.reply(t(ctx, 'address'));
+  const addr = await conversation.waitFor(':text');
+  if (!addr.message?.text) { await ctx.reply(t(ctx, 'error')); return; }
+  ctx.session.data.address = addr.message.text;
+
+  // Additional Contact (Optional)
+  await ctx.reply(t(ctx, 'addContact'), {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '📱 Add', callback_data: 'add_contact' }],
+        [{ text: '⏭️ Skip', callback_data: 'skip_contact' }],
+      ],
+    },
+  });
+
+  const choice = await conversation.waitForCallbackQuery(['add_contact', 'skip_contact']);
+  await choice.answerCallbackQuery();
+  if (choice.callbackQuery.data === 'add_contact') {
+    await ctx.reply(t(ctx, 'enterContact'));
+    const cont = await conversation.waitFor(':text');
+    if (cont.message?.text) ctx.session.data.additionalContact = cont.message.text;
+  }
+
+  // Terms
+  await ctx.reply(`${t(ctx, 'terms')}\n\n${t(ctx, 'accept')}`, {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '✅ Accept', callback_data: 'accept_terms' }],
+        [{ text: '❌ Cancel', callback_data: 'cancel_reg' }],
+      ],
+    },
+  });
+
+  const terms = await conversation.waitForCallbackQuery(['accept_terms', 'cancel_reg']);
+  await terms.answerCallbackQuery();
+  if (terms.callbackQuery.data === 'cancel_reg') {
+    await ctx.reply('❌ Registration cancelled.');
+    return;
+  }
+
+  ctx.session.data.termsAccepted = true;
+
+  // Submit
+  await ctx.reply('⏳ Creating account...');
+  try {
+    const data = await apiCall('/api/v1/customers/register', {
+      method: 'POST',
+      body: JSON.stringify({
+        telegramId: ctx.from.id.toString(),
+        username: ctx.from.username,
+        firstName: ctx.session.data.firstName,
+        lastName: ctx.session.data.lastName,
+        phone: ctx.session.data.phone || '',
+        fullName: `${ctx.session.data.firstName} ${ctx.session.data.lastName || ''}`.trim(),
+        deliveryAddress: ctx.session.data.address,
+        additionalContact: ctx.session.data.additionalContact || '',
+        preferredLanguage: ctx.session.language || 'en',
+        termsAccepted: true,
+        termsVersion: '1.0',
+      }),
+    }, ctx);
+
+    if (data.success) {
+      ctx.session.isRegistered = true;
+      ctx.session.customerId = data.data.customer?.id || data.data.user?.id;
+      await ctx.reply(`🎉 ${t(ctx, 'regComplete')}`, {
+        reply_markup: {
+          inline_keyboard: [[{ text: '📋 Menu', callback_data: 'show_menu' }]],
+        },
+      });
+    } else {
+      await ctx.reply(`❌ ${t(ctx, 'error')}: ${data.error?.message || 'Unknown'}`);
+    }
+  } catch {
+    await ctx.reply(`❌ ${t(ctx, 'network')}`);
+  }
+}
+
+// ============================================================
+// COMMANDS
+// ============================================================
+
+bot.command('start', async (ctx) => {
+  const registered = await checkUser(ctx);
+  if (registered) {
+    await ctx.reply(`👋 ${t(ctx, 'existing')}, ${ctx.from?.first_name || ''}!`, {
+      reply_markup: {
+        inline_keyboard: [[{ text: '📋 Menu', callback_data: 'show_menu' }]],
+      },
+    });
+    return;
+  }
+
+  await ctx.reply(
+    `${t(ctx, 'welcome')}\n\n${t(ctx, 'desc')}\n\n${t(ctx, 'chooseLang')}`,
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🇬🇧 English', callback_data: 'lang_en' }],
+          [{ text: '🇪🇹 አማርኛ', callback_data: 'lang_am' }],
+        ],
+      },
+    }
+  );
+});
+
+// ============================================================
+// LANGUAGE
+// ============================================================
+
+bot.callbackQuery(/lang_(en|am)/, async (ctx) => {
+  const lang = ctx.match[1] as 'en' | 'am';
+  await ctx.answerCallbackQuery();
+  ctx.session.language = lang;
+
+  await ctx.reply(
+    `${t(ctx, 'langSet')}\n\n${t(ctx, 'phoneReq')}`,
+    {
+      reply_markup: {
+        keyboard: [[{ text: `📱 ${lang === 'en' ? 'Share Phone Number' : 'ስልክ ቁጥር አጋራ'}`, request_contact: true }]],
+        resize_keyboard: true,
+        one_time_keyboard: true,
+      },
+    }
+  );
+});
+
+// ============================================================
+// CONTACT
+// ============================================================
+
+bot.on('message:contact', async (ctx) => {
+  const contact = ctx.message.contact;
+  if (!contact) return;
+
+  ctx.session.data.phone = contact.phone_number;
+
+  await ctx.reply(t(ctx, 'phoneRecv'), {
+    reply_markup: { remove_keyboard: true },
+  });
+
+  await ctx.conversation.enter('registration');
+});
+
+// ============================================================
+// MAIN MENU
+// ============================================================
+
+bot.callbackQuery('show_menu', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await showMainMenu(ctx);
+});
+
+async function showMainMenu(ctx: MyContext) {
+  await ctx.reply(
+    `📋 *${t(ctx, 'menu')}*\n\n${t(ctx, 'choose')}`,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🥩 ' + t(ctx, 'groups'), callback_data: 'menu_groups' }],
+          [{ text: '🛒 ' + t(ctx, 'orders'), callback_data: 'menu_orders' }],
+          [{ text: '👤 ' + t(ctx, 'profile'), callback_data: 'menu_profile' }],
+          [{ text: '↩️ ' + t(ctx, 'refunds'), callback_data: 'menu_refunds' }],
+          [{ text: '❓ ' + t(ctx, 'help'), callback_data: 'menu_help' }],
+          [{ text: '☎ ' + t(ctx, 'contact'), callback_data: 'menu_contact' }],
+          [{ text: '⚙️ ' + t(ctx, 'settings'), callback_data: 'menu_settings' }],
+        ],
+      },
+    }
+  );
+}
+
+// ============================================================
+// MENU HANDLERS
+// ============================================================
+
+bot.callbackQuery('menu_groups', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply('🥩 *Available Kircha*\n\nNo groups available.', {
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: [[{ text: '🔙 Back', callback_data: 'show_menu' }]] },
+  });
+});
+
+bot.callbackQuery('menu_orders', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply('🛒 *My Orders*\n\nNo orders found.', {
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: [[{ text: '🔙 Back', callback_data: 'show_menu' }]] },
+  });
+});
+
+bot.callbackQuery('menu_profile', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try {
+    const data = await apiCall('/api/v1/customers/me', {}, ctx);
+    if (data.success) {
+      const c = data.data;
+      await ctx.reply(
+        `👤 *Profile*\n\n📛 ${c.fullName || 'N/A'}\n📱 ${c.user?.phone || 'N/A'}\n📍 ${c.deliveryAddress || 'N/A'}\n📅 ${new Date(c.registrationDate).toLocaleDateString()}`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [[{ text: '🔙 Back', callback_data: 'show_menu' }]] },
+        }
+      );
+    }
+  } catch {
+    await ctx.reply('❌ Error loading profile.', {
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Back', callback_data: 'show_menu' }]] },
+    });
+  }
+});
+
+bot.callbackQuery('menu_refunds', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply('↩️ *Refunds*\n\nNo refund requests.', {
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: [[{ text: '🔙 Back', callback_data: 'show_menu' }]] },
+  });
+});
+
+bot.callbackQuery('menu_help', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    '❓ *Help*\n\n1️⃣ How do I join a group?\n2️⃣ How do I place an order?\n3️⃣ How do I pay?\n4️⃣ How do I request a refund?\n5️⃣ How do I contact support?',
+    {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: [[{ text: '☎ Contact', callback_data: 'menu_contact' }]] },
+    }
+  );
+});
+
+bot.callbackQuery('menu_contact', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    '☎ *Contact Us*\n\n📱 Phone: +251 XXX XXX XXX\n📧 Email: support@alekircha.com\n📱 Telegram: @AleKirchaAdmin\n\n🕐 Mon-Fri 9AM-6PM',
+    {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Back', callback_data: 'show_menu' }]] },
+    }
+  );
+});
+
+bot.callbackQuery('menu_settings', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    `⚙️ *Settings*\n\n🌐 Language: ${ctx.session.language === 'am' ? 'አማርኛ' : 'English'}`,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🌐 Change Language', callback_data: 'change_lang' }],
+          [{ text: '🔙 Back', callback_data: 'show_menu' }],
+        ],
+      },
+    }
+  );
+});
+
+bot.callbackQuery('change_lang', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    '🌐 *Choose Language*',
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🇬🇧 English', callback_data: 'lang_en' }],
+          [{ text: '🇪🇹 አማርኛ', callback_data: 'lang_am' }],
+        ],
+      },
+    }
+  );
+});
+
+// ============================================================
+// REGISTER CONVERSATION
+// ============================================================
+
+bot.use(createConversation(registrationConversation, 'registration'));
+
+// ============================================================
+// START BOT
+// ============================================================
+
+console.log('🤖 Customer Bot running');
+console.log(`📊 API: ${API_URL}`);
+
+bot.start({ allowed_updates: ['message', 'callback_query'] });
+
+// Health check
+http.createServer((req, res) => {
+  if (req.url === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok', service: 'customer-bot', port: PORT }));
+  } else {
+    res.writeHead(404);
+    res.end('Not Found');
+  }
+}).listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ Health: http://localhost:${PORT}/health`);
+});
+
+// ============================================================
+// NOTIFY ADMIN ON CUSTOMER REGISTRATION
+// ============================================================
+
+async function notifyAdminRegistration(customerData: any) {
+  try {
+    const message = `🔔 *NEW CUSTOMER REGISTERED*\n\n` +
+      `👤 Name: ${customerData.fullName || 'N/A'}\n` +
+      `📱 Phone: ${customerData.phone || 'N/A'}\n` +
+      `📱 Telegram: ${customerData.telegramId || 'N/A'}\n` +
+      `📍 Address: ${customerData.deliveryAddress || 'N/A'}\n` +
+      `🌐 Language: ${customerData.preferredLanguage || 'en'}\n` +
+      `📅 Registered: ${new Date().toLocaleString()}\n\n` +
+      `Total Customers: ${customerData.totalCustomers || 'N/A'}`;
+
+    // Send to admin bot via API
+    await apiCall('/api/v1/admin/notify', {
+      method: 'POST',
+      body: JSON.stringify({
+        type: 'CUSTOMER_REGISTERED',
+        title: 'New Customer Registered',
+        message: message,
+        data: customerData
+      })
+    }, null);
+  } catch (error) {
+    console.error('Failed to notify admin:', error);
+  }
+}
+
+// ============================================================
+// ENHANCED REGISTRATION WITH ADMIN NOTIFICATION
+// ============================================================
+
+async function registrationConversation(conversation: any, ctx: MyContext) {
+  // ... existing registration steps ...
+  
+  // After successful registration, notify admin
+  try {
+    // Send notification to admin via API
+    await apiCall('/api/v1/admin/notify', {
+      method: 'POST',
+      body: JSON.stringify({
+        type: 'CUSTOMER_REGISTERED',
+        title: '🔔 New Customer Registered',
+        message: `👤 New customer registered!\n\nCustomer ID: ${ctx.session.customerId}\nName: ${ctx.session.data.firstName} ${ctx.session.data.lastName}\nPhone: ${ctx.session.data.phone}\nTelegram: @${ctx.from.username || 'N/A'}\nLanguage: ${ctx.session.language}`,
+        data: {
+          customerId: ctx.session.customerId,
+          firstName: ctx.session.data.firstName,
+          lastName: ctx.session.data.lastName,
+          phone: ctx.session.data.phone,
+          telegramId: ctx.from.id,
+          username: ctx.from.username,
+          language: ctx.session.language
+        }
+      })
+    }, ctx);
+  } catch (error) {
+    console.error('Failed to notify admin:', error);
+  }
+}
+
+// ============================================================
+// CUSTOMER GROUP CREATION
+// ============================================================
+
+async function createGroupConversation(conversation: any, ctx: MyContext) {
+  // Step 1: Group Name
+  await ctx.reply('📝 Enter the group name:');
+  const nameResult = await conversation.waitFor(':text');
+  const groupName = nameResult.message?.text;
+  
+  // Step 2: Kircha Type
+  await ctx.reply('🐂 Select Kircha type:', {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '🐐 Goat', callback_data: 'group_type_goat' }],
+        [{ text: '🐑 Sheep', callback_data: 'group_type_sheep' }],
+        [{ text: '🐂 Ox', callback_data: 'group_type_ox' }],
+      ],
+    },
+  });
+  
+  const typeResult = await conversation.waitForCallbackQuery(['group_type_goat', 'group_type_sheep', 'group_type_ox']);
+  const kirchaType = typeResult.callbackQuery.data.replace('group_type_', '');
+  await typeResult.answerCallbackQuery();
+  
+  // Step 3: Max Quota
+  await ctx.reply('📊 Enter maximum quota (e.g., 5.00):');
+  const quotaResult = await conversation.waitFor(':text');
+  const maxQuota = parseFloat(quotaResult.message?.text || '0');
+  
+  // Step 4: Price
+  await ctx.reply('💰 Enter amount per Full quota (ETB):');
+  const priceResult = await conversation.waitFor(':text');
+  const fullPrice = parseFloat(priceResult.message?.text || '0');
+  
+  // Step 5: Address
+  await ctx.reply('📍 Enter group address:');
+  const addressResult = await conversation.waitFor(':text');
+  const address = addressResult.message?.text;
+  
+  // Step 6: Maturity Date
+  await ctx.reply('📅 Enter maturity date (YYYY-MM-DD):');
+  const maturityResult = await conversation.waitFor(':text');
+  const maturityDate = maturityResult.message?.text;
+  
+  // Step 7: Expiry Date
+  await ctx.reply('📅 Enter expiry date (YYYY-MM-DD):');
+  const expiryResult = await conversation.waitFor(':text');
+  const expiryDate = expiryResult.message?.text;
+  
+  // Show confirmation
+  await ctx.reply(
+    `📋 *CONFIRM GROUP REQUEST*\n\n` +
+    `📌 Group: ${groupName}\n` +
+    `🐂 Type: ${kirchaType}\n` +
+    `📊 Max Quota: ${maxQuota}\n` +
+    `💰 Full Price: ETB ${fullPrice}\n` +
+    `📍 Address: ${address}\n` +
+    `📅 Maturity: ${maturityDate}\n` +
+    `📅 Expiry: ${expiryDate}\n\n` +
+    `[✅ Submit for Approval] [✏️ Edit] [❌ Cancel]`,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '✅ Submit', callback_data: 'group_submit' }],
+          [{ text: '✏️ Edit', callback_data: 'group_edit' }],
+          [{ text: '❌ Cancel', callback_data: 'group_cancel' }],
+        ],
+      },
+    }
+  );
+  
+  const submitResult = await conversation.waitForCallbackQuery(['group_submit', 'group_edit', 'group_cancel']);
+  await submitResult.answerCallbackQuery();
+  
+  if (submitResult.callbackQuery.data === 'group_submit') {
+    // Submit for admin approval
+    await ctx.reply('✅ Group request submitted for admin approval!');
+    
+    // Notify admin
+    await apiCall('/api/v1/admin/notify', {
+      method: 'POST',
+      body: JSON.stringify({
+        type: 'GROUP_REQUESTED',
+        title: '📋 New Kircha Group Request',
+        message: `New group request from ${ctx.from.first_name}\n\nGroup: ${groupName}\nType: ${kirchaType}\nQuota: ${maxQuota}\nPrice: ETB ${fullPrice}`,
+        data: {
+          groupName,
+          kirchaType,
+          maxQuota,
+          fullPrice,
+          address,
+          maturityDate,
+          expiryDate,
+          customerId: ctx.session.customerId
+        }
+      })
+    }, ctx);
+  }
+}
+
+// ============================================================
+// PAYMENT ADVICE SUBMISSION
+// ============================================================
+
+async function paymentAdviceConversation(conversation: any, ctx: MyContext) {
+  // Payment Method
+  await ctx.reply('💳 Select payment method:', {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '🏦 Bank Transfer', callback_data: 'pay_bank' }],
+        [{ text: '📱 Telebirr', callback_data: 'pay_telebirr' }],
+        [{ text: '💳 Other', callback_data: 'pay_other' }],
+      ],
+    },
+  });
+  
+  const methodResult = await conversation.waitForCallbackQuery(['pay_bank', 'pay_telebirr', 'pay_other']);
+  const paymentMethod = methodResult.callbackQuery.data.replace('pay_', '');
+  await methodResult.answerCallbackQuery();
+  
+  // Amount
+  await ctx.reply('💰 Enter amount paid:');
+  const amountResult = await conversation.waitFor(':text');
+  const amount = parseFloat(amountResult.message?.text || '0');
+  
+  // Transaction Reference
+  await ctx.reply('📋 Enter transaction reference:');
+  const refResult = await conversation.waitFor(':text');
+  const reference = refResult.message?.text;
+  
+  // Payment Date
+  await ctx.reply('📅 Enter payment date (YYYY-MM-DD):');
+  const dateResult = await conversation.waitFor(':text');
+  const paymentDate = dateResult.message?.text;
+  
+  // Upload Advice
+  await ctx.reply('📎 Please upload your payment advice/receipt:');
+  // File upload handled separately
+  
+  // Submit
+  await ctx.reply('✅ Payment advice submitted for verification!');
+  
+  // Notify admin
+  await apiCall('/api/v1/admin/notify', {
+    method: 'POST',
+    body: JSON.stringify({
+      type: 'PAYMENT_SUBMITTED',
+      title: '💳 Payment Submitted',
+      message: `Payment submitted by ${ctx.from.first_name}\n\nOrder: ${ctx.session.data.orderId || 'N/A'}\nAmount: ETB ${amount}\nMethod: ${paymentMethod}\nReference: ${reference}`,
+      data: {
+        orderId: ctx.session.data.orderId,
+        amount,
+        paymentMethod,
+        reference,
+        paymentDate,
+        customerId: ctx.session.customerId
+      }
+    })
+  }, ctx);
+}
+
+// ============================================================
+// REFUND REQUEST
+// ============================================================
+
+bot.callbackQuery('request_refund', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  // Start refund conversation
+  await ctx.conversation.enter('refund_request');
+});
+
+async function refundRequestConversation(conversation: any, ctx: MyContext) {
+  // Show refund calculation
+  await ctx.reply(
+    '💰 *REFUND CALCULATION*\n\n' +
+    '📌 Original Amount: ETB 8,300.00\n' +
+    '📌 Refund Fee: ETB 100.00\n' +
+    '📌 Processing Fee: ETB 50.00\n' +
+    '📌 Net Refund: ETB 8,150.00\n\n' +
+    'Do you accept this calculation?',
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '✅ Accept', callback_data: 'refund_accept_calc' }],
+          [{ text: '❌ Cancel', callback_data: 'refund_cancel' }],
+        ],
+      },
+    }
+  );
+  
+  const calcResult = await conversation.waitForCallbackQuery(['refund_accept_calc', 'refund_cancel']);
+  await calcResult.answerCallbackQuery();
+  
+  if (calcResult.callbackQuery.data === 'refund_cancel') {
+    await ctx.reply('❌ Refund cancelled.');
+    return;
+  }
+  
+  // Enter bank details
+  await ctx.reply('🏦 *ENTER BANK DETAILS*\n\n' +
+    'Bank: [enter bank name]\n' +
+    'Account Name: [enter name]\n' +
+    'Account Number: [enter number]\n' +
+    'Confirm Account Number: [confirm]',
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '✅ Submit', callback_data: 'refund_submit' }],
+          [{ text: '❌ Cancel', callback_data: 'refund_cancel' }],
+        ],
+      },
+    }
+  );
+  
+  const submitResult = await conversation.waitForCallbackQuery(['refund_submit', 'refund_cancel']);
+  await submitResult.answerCallbackQuery();
+  
+  if (submitResult.callbackQuery.data === 'refund_submit') {
+    await ctx.reply('✅ Refund request submitted!');
+    
+    // Notify admin
+    await apiCall('/api/v1/admin/notify', {
+      method: 'POST',
+      body: JSON.stringify({
+        type: 'REFUND_REQUESTED',
+        title: '🔄 New Refund Request',
+        message: `Refund requested by ${ctx.from.first_name}\n\nOrder: ${ctx.session.data.orderId}\nAmount: ETB 8,150.00`,
+        data: {
+          orderId: ctx.session.data.orderId,
+          amount: 8150,
+          customerId: ctx.session.customerId
+        }
+      })
+    }, ctx);
+  }
+}
+
+// ============================================================
+// REFUND REQUEST
+// ============================================================
+
+bot.callbackQuery('request_refund', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  // Start refund conversation
+  await ctx.conversation.enter('refund_request');
+});
+
+async function refundRequestConversation(conversation: any, ctx: MyContext) {
+  // Show refund calculation
+  await ctx.reply(
+    '💰 *REFUND CALCULATION*\n\n' +
+    '📌 Original Amount: ETB 8,300.00\n' +
+    '📌 Refund Fee: ETB 100.00\n' +
+    '📌 Processing Fee: ETB 50.00\n' +
+    '📌 Net Refund: ETB 8,150.00\n\n' +
+    'Do you accept this calculation?',
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '✅ Accept', callback_data: 'refund_accept_calc' }],
+          [{ text: '❌ Cancel', callback_data: 'refund_cancel' }],
+        ],
+      },
+    }
+  );
+  
+  const calcResult = await conversation.waitForCallbackQuery(['refund_accept_calc', 'refund_cancel']);
+  await calcResult.answerCallbackQuery();
+  
+  if (calcResult.callbackQuery.data === 'refund_cancel') {
+    await ctx.reply('❌ Refund cancelled.');
+    return;
+  }
+  
+  // Enter bank details
+  await ctx.reply('🏦 *ENTER BANK DETAILS*\n\n' +
+    'Bank: [enter bank name]\n' +
+    'Account Name: [enter name]\n' +
+    'Account Number: [enter number]\n' +
+    'Confirm Account Number: [confirm]',
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '✅ Submit', callback_data: 'refund_submit' }],
+          [{ text: '❌ Cancel', callback_data: 'refund_cancel' }],
+        ],
+      },
+    }
+  );
+  
+  const submitResult = await conversation.waitForCallbackQuery(['refund_submit', 'refund_cancel']);
+  await submitResult.answerCallbackQuery();
+  
+  if (submitResult.callbackQuery.data === 'refund_submit') {
+    await ctx.reply('✅ Refund request submitted!');
+    
+    // Notify admin
+    await apiCall('/api/v1/admin/notify', {
+      method: 'POST',
+      body: JSON.stringify({
+        type: 'REFUND_REQUESTED',
+        title: '🔄 New Refund Request',
+        message: `Refund requested by ${ctx.from.first_name}\n\nOrder: ${ctx.session.data.orderId}\nAmount: ETB 8,150.00`,
+        data: {
+          orderId: ctx.session.data.orderId,
+          amount: 8150,
+          customerId: ctx.session.customerId
+        }
+      })
+    }, ctx);
+  }
+}

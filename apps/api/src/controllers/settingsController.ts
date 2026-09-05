@@ -25,7 +25,7 @@ export class SettingsController {
     const setting = await prisma.systemSetting.upsert({
       where: { key },
       update: { value, description },
-      create: { key, value, description }
+      create: { key, value, description, type: "string", category: "general" }
     });
     return reply.send({ success: true, data: setting });
   }

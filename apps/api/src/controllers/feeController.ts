@@ -13,7 +13,7 @@ export class FeeController {
     
     const configs = await prisma.feeConfiguration.findMany({
       where,
-      orderBy: [{ priority: 'asc' }, { createdAt: 'desc' }]
+      orderBy: [{ displayOrder: 'asc' }, { createdAt: 'desc' }]
     });
     return reply.send({ success: true, data: configs });
   }
@@ -33,16 +33,16 @@ export class FeeController {
       data: {
         key: body.key || `${body.type}_${Date.now()}`,
         type: body.type,
-        nameEn: body.nameEn,
+        name: body.nameEn,
         nameAm: body.nameAm || body.nameEn,
         descriptionEn: body.descriptionEn,
         descriptionAm: body.descriptionAm,
-        valueType: body.valueType || 'FIXED',
+        type: body.type || 'FIXED',
         value: body.value || 0,
         minValue: body.minValue,
         maxValue: body.maxValue,
         isActive: body.isActive !== undefined ? body.isActive : true,
-        priority: body.priority || 0,
+        displayOrder: body.priority || 0,
         applyTo: body.applyTo || 'ALL',
         applyToId: body.applyToId,
         startDate: body.startDate ? new Date(body.startDate) : undefined,
@@ -74,7 +74,7 @@ export class FeeController {
   async getDeliveryZones(request: FastifyRequest, reply: FastifyReply) {
     const zones = await prisma.deliveryZone.findMany({
       where: { isActive: true },
-      orderBy: { priority: 'asc' }
+      orderBy: { displayOrder: 'asc' }
     });
     return reply.send({ success: true, data: zones });
   }
@@ -83,13 +83,13 @@ export class FeeController {
     const body = request.body as any;
     const zone = await prisma.deliveryZone.create({
       data: {
-        nameEn: body.nameEn,
+        name: body.nameEn,
         nameAm: body.nameAm || body.nameEn,
         fee: body.fee || 0,
         minOrder: body.minOrder || 0,
         maxOrder: body.maxOrder,
         isActive: body.isActive !== undefined ? body.isActive : true,
-        priority: body.priority || 0
+        displayOrder: body.priority || 0
       }
     });
     return reply.status(201).send({ success: true, data: zone });
@@ -155,7 +155,7 @@ export class FeeController {
             { applyTo: 'CUSTOMER', applyToId: customerId }
           ]
         },
-        orderBy: { priority: 'asc' }
+        orderBy: { displayOrder: 'asc' }
       });
 
       // Get delivery fee
@@ -163,11 +163,11 @@ export class FeeController {
       if (deliveryZone) {
         const zone = await prisma.deliveryZone.findFirst({
           where: {
-            nameEn: deliveryZone,
+            name: deliveryZone,
             isActive: true,
             minOrder: { lte: subtotal }
           },
-          orderBy: { priority: 'asc' }
+          orderBy: { displayOrder: 'asc' }
         });
         if (zone) deliveryFee = zone.fee;
       }
@@ -187,7 +187,7 @@ export class FeeController {
         const value = config.value;
         let appliedValue = 0;
 
-        if (config.valueType === 'PERCENTAGE') {
+        if (config.type === 'PERCENTAGE') {
           appliedValue = (subtotal * value) / 100;
         } else {
           appliedValue = value;
@@ -209,7 +209,7 @@ export class FeeController {
           name: config.nameEn,
           type: config.type,
           value: config.value,
-          valueType: config.valueType,
+          type: config.type,
           applied: appliedValue
         });
       }

@@ -1,3 +1,7 @@
+// ============================================================
+// ALE KIRCHA (አለ ቅርጫ) - COMPLETE DATABASE SCHEMA
+// ============================================================
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -8,64 +12,217 @@ datasource db {
 }
 
 // ============================================================
-// ALL YOUR MODELS HERE (the same as before)
+// ENUMS
+// ============================================================
+
+enum Role {
+  CUSTOMER
+  ADMIN
+  SUPER_ADMIN
+  PAYMENT_VERIFIER
+  ORDER_MANAGER
+  DELIVERY_MANAGER
+  REPORT_VIEWER
+}
+
+enum Language {
+  en
+  am
+}
+
+enum OrderStatus {
+  DRAFT
+  PENDING_PAYMENT
+  PAYMENT_SUBMITTED
+  PAYMENT_UNDER_REVIEW
+  PAYMENT_CONFIRMED
+  PAYMENT_REJECTED
+  PREPARING
+  READY_FOR_DELIVERY
+  ASSIGNED_TO_DELIVERY
+  OUT_FOR_DELIVERY
+  DELIVERED
+  COMPLETED
+  CANCELLED
+  EXPIRED
+  REFUND_PENDING
+  REFUNDED
+}
+
+enum PaymentStatus {
+  PENDING
+  SUBMITTED
+  UNDER_REVIEW
+  CONFIRMED
+  REJECTED
+  EXPIRED
+  REFUNDED
+}
+
+enum PaymentMethodType {
+  TELEBIRR
+  CBE
+  AWASH
+  DASHEN
+  WEGAGEN
+  OTHER
+}
+
+enum RefundStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  PROCESSING
+  PAYMENT_FAILED
+  COMPLETED
+  CUSTOMER_CONFIRMED
+  COMPLAINT
+  INVESTIGATING
+  RESOLVED
+  CLOSED
+}
+
+enum ComplaintStatus {
+  OPEN
+  INVESTIGATING
+  RESOLVED
+  CLOSED
+}
+
+enum DeliveryStatus {
+  UNASSIGNED
+  ASSIGNED
+  PICKED_UP
+  OUT_FOR_DELIVERY
+  DELIVERED
+  FAILED_DELIVERY
+}
+
+enum KirchaGroupStatus {
+  DRAFT
+  OPEN
+  ALMOST_FULL
+  FULL
+  CLOSED
+  SLAUGHTERED
+  PROCESSING
+  READY
+  DELIVERING
+  COMPLETED
+  CANCELLED
+}
+
+enum AccountStatus {
+  ACTIVE
+  INACTIVE
+  BLOCKED
+  SUSPENDED
+}
+
+// ============================================================
+// USERS & AUTHENTICATION
 // ============================================================
 
 model User {
-  id            String    @id @default(cuid())
-  telegramId    String    @unique
-  username      String?
-  firstName     String
-  lastName      String?
-  phone         String?   @unique
-  role          String    @default("CUSTOMER")
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id           String    @id @default(cuid())
+  telegramId   String    @unique
+  username     String?
+  firstName    String
+  lastName     String?
+  phoneNumber  String    @unique
+  language     Language  @default(en)
+  role         Role      @default(CUSTOMER)
+  isActive     Boolean   @default(true)
+  isBanned     Boolean   @default(false)
+  banReason    String?
+  bannedAt     DateTime?
+  lastActiveAt DateTime  @default(now())
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
-  customer      Customer?
+  // Relations
+  customer         Customer?
+  admin            Admin?
   legalAcceptances UserLegalAcceptance[]
+  auditLogs        AuditLog[]             @relation("UserAudit")
+  notifications    Notification[]         @relation("UserNotifications")
+  supportTickets   SupportRequest[]       @relation("UserTickets")
+  bannedRecords    BannedUser[]
+  bulkMessages     BulkMessageRecipient[]
+
+  @@map("users")
 }
 
 model Customer {
   id                String    @id @default(cuid())
   userId            String    @unique
-  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  fullName          String
+  customerCode      String    @unique
   additionalPhone   String?
-  preferredLanguage String    @default("en")
-  registrationDate  DateTime  @default(now())
-  status            String    @default("ACTIVE")
+  fullName          String
+  deliveryAddress   String
+  city              String?
+  subCity           String?
+  woreda            String?
+  kebele            String?
+  houseNumber       String?
+  landmark          String?
+  addressNotes      String?
+  latitude          Float?
+  longitude         Float?
+  termsAccepted     Boolean   @default(false)
+  termsVersion      String?
+  termsAcceptedAt   DateTime?
+  privacyAccepted   Boolean   @default(false)
+  privacyVersion    String?
+  privacyAcceptedAt DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
-  addresses         CustomerAddress[]
+  // Relations
+  user              User                    @relation(fields: [userId], references: [id])
   orders            Order[]
-  groupMemberships  KirchaGroupMembership[]
-  paymentAdvices    PaymentAdvice[]
-  notifications     Notification[]
-  supportRequests   SupportRequest[]
-  legalAcceptances  UserLegalAcceptance[]
   refundRequests    RefundRequest[]
-  createdGroups     KirchaGroup[]
   complaints        Complaint[]
+  kirchaMemberships KirchaGroupMembership[]
+  supportTickets    SupportRequest[]        @relation("CustomerTickets")
+  paymentAdvices    PaymentAdvice[]
+
+  @@map("customers")
 }
 
-model CustomerAddress {
+model Admin {
   id           String   @id @default(cuid())
-  customerId   String
-  customer     Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  city         String
-  subCity      String?
-  woreda       String?
-  houseNumber  String?
-  landmark     String?
-  directions   String?
-  latitude     Float?
-  longitude    Float?
-  isDefault    Boolean  @default(false)
+  userId       String   @unique
+  displayName  String
+  isSuperAdmin Boolean  @default(false)
+  permissions  String[] @default([])
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  orders       Order[]
+  // Relations
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("admins")
 }
+
+model BannedUser {
+  id        String    @id @default(cuid())
+  userId    String
+  reason    String
+  bannedBy  String
+  bannedAt  DateTime  @default(now())
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
+
+  // Relations
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("banned_users")
+}
+
+// ============================================================
+// KIRCHA SYSTEM
+// ============================================================
 
 model KirchaType {
   id            String   @id @default(cuid())
@@ -76,375 +233,434 @@ model KirchaType {
   descriptionAm String?
   imageUrl      String?
   icon          String?
-  active        Boolean  @default(true)
   displayOrder  Int      @default(0)
+  isActive      Boolean  @default(true)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  groups        KirchaGroup[]
+  // Relations
+  groups KirchaGroup[]
+
+  @@map("kircha_types")
 }
 
 model KirchaGroup {
-  id                String   @id @default(cuid())
-  groupCode         String   @unique
-  kirchaTypeId      String
-  kirchaType        KirchaType @relation(fields: [kirchaTypeId], references: [id])
-
-  nameEn            String   @unique
-  nameAm            String
-  descriptionEn     String?
-  descriptionAm     String?
-  status            String    @default("DRAFT")
-
-  totalCapacity     Float    @default(0)
-  reservedQuantity  Float    @default(0)
-  soldQuantity      Float    @default(0)
-
-  unitPrice         Float    @default(0)
-  halfPrice         Float?
-  quarterPrice      Float?
-  deliveryFee       Float    @default(0)
-  discount          Float    @default(0)
-  tax               Float    @default(0)
-  additionalFees    Float    @default(0)
-
-  registrationOpenAt  DateTime
-  registrationCloseAt DateTime
+  id                  String            @id @default(cuid())
+  groupCode           String            @unique
+  kirchaTypeId        String
+  name                String
+  description         String?
+  status              KirchaGroupStatus @default(DRAFT)
+  totalQuota          Decimal           @default(0)
+  reservedQuota       Decimal           @default(0)
+  soldQuota           Decimal           @default(0)
+  minimumQuantity     Decimal?
+  maximumQuantity     Decimal?
+  quantityStep        Decimal?
+  unitPrice           Decimal
+  deliveryFee         Decimal           @default(0)
+  discount            Decimal           @default(0)
+  tax                 Decimal           @default(0)
+  registrationOpenAt  DateTime?
+  registrationCloseAt DateTime?
   slaughterDate       DateTime?
   slaughterTime       String?
   slaughterLocation   String?
-  processingDate      DateTime?
   deliveryDate        DateTime?
-  deliveryTimeStart   String?
-  deliveryTimeEnd     String?
+  deliveryTime        String?
   deliveryArea        String?
+  notes               String?
+  createdBy           String
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
 
-  minQuantity       Float    @default(0.25)
-  maxQuantity       Float    @default(3)
-  quantityStep      Float    @default(0.25)
-  allowHalfShare    Boolean  @default(true)
-  allowQuarterShare Boolean  @default(true)
+  // Relations
+  kirchaType  KirchaType              @relation(fields: [kirchaTypeId], references: [id])
+  images      KirchaGroupImage[]
+  memberships KirchaGroupMembership[]
+  orders      Order[]
 
-  expiryDate        DateTime?
-  autoExpire        Boolean  @default(false)
-  minMembersRequired Int      @default(2)
-  maxMembersAllowed  Int      @default(10)
-
-  createdBy         String?
-  createdByCustomerId String?
-  createdByCustomer Customer? @relation(fields: [createdByCustomerId], references: [id])
-
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
-  closedAt          DateTime?
-
-  images            KirchaGroupImage[]
-  memberships       KirchaGroupMembership[]
-  orders            Order[]
+  @@map("kircha_groups")
 }
 
 model KirchaGroupImage {
-  id          String   @id @default(cuid())
-  groupId     String
-  group       KirchaGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  storageKey  String
-  url         String
-  mimeType    String
-  size        Int
-  isPrimary   Boolean  @default(false)
-  displayOrder Int     @default(0)
-  createdAt   DateTime @default(now())
+  id           String   @id @default(cuid())
+  groupId      String
+  imageUrl     String
+  isPrimary    Boolean  @default(false)
+  displayOrder Int      @default(0)
+  caption      String?
+  createdAt    DateTime @default(now())
+
+  // Relations
+  group KirchaGroup @relation(fields: [groupId], references: [id])
+
+  @@map("kircha_group_images")
 }
 
 model KirchaGroupMembership {
-  id                String   @id @default(cuid())
-  groupId           String
-  group             KirchaGroup @relation(fields: [groupId], references: [id])
+  id                String    @id @default(cuid())
   customerId        String
-  customer          Customer @relation(fields: [customerId], references: [id])
-
-  portionType       String   @default("FULL")
-  quantity          Float
-  unitPrice         Float
-  subtotal          Float
-  discount          Float
-  deliveryFee       Float
-  additionalFees    Float
-  tax               Float
-  totalAmount       Float
-
-  reservationStatus String   @default("PENDING")
-  paymentStatus     String   @default("UNPAID")
-  orderStatus       String   @default("DRAFT")
-
+  groupId           String
+  portionType       String
+  quantity          Decimal
+  unitPrice         Decimal
+  subtotal          Decimal
+  discount          Decimal   @default(0)
+  deliveryFee       Decimal   @default(0)
+  additionalFee     Decimal   @default(0)
+  totalAmount       Decimal
+  reservationStatus String    @default("PENDING")
+  paymentStatus     String    @default("UNPAID")
+  orderStatus       String    @default("DRAFT")
   joinedAt          DateTime  @default(now())
   confirmedAt       DateTime?
   cancelledAt       DateTime?
-  expiresAt         DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
-  orders            Order[]
-  refundRequests    RefundRequest[]
+  // Relations
+  customer Customer    @relation(fields: [customerId], references: [id])
+  group    KirchaGroup @relation(fields: [groupId], references: [id])
+  order    Order?
+
+  @@unique([customerId, groupId])
+  @@map("kircha_group_memberships")
 }
+
+// ============================================================
+// ORDERS
+// ============================================================
 
 model Order {
-  id                    String   @id @default(cuid())
-  orderNumber           String   @unique
-  customerId            String
-  customer              Customer @relation(fields: [customerId], references: [id])
-  groupId               String?
-  group                 KirchaGroup? @relation(fields: [groupId], references: [id])
-  membershipId          String?
-  membership            KirchaGroupMembership? @relation(fields: [membershipId], references: [id])
+  id                 String      @id @default(cuid())
+  orderNumber        String      @unique
+  customerId         String
+  membershipId       String?     @unique
+  groupId            String
+  status             OrderStatus @default(DRAFT)
+  portionType        String
+  quantity           Decimal
+  unitPrice          Decimal
+  subtotal           Decimal
+  discount           Decimal     @default(0)
+  deliveryFee        Decimal     @default(0)
+  serviceCharge      Decimal     @default(0)
+  tax                Decimal     @default(0)
+  totalAmount        Decimal
+  paymentDeadline    DateTime?
+  deliveryAddress    String
+  city               String?
+  subCity            String?
+  woreda             String?
+  houseNumber        String?
+  landmark           String?
+  latitude           Float?
+  longitude          Float?
+  deliveryDate       DateTime?
+  deliveryTime       String?
+  customerNotes      String?
+  adminNotes         String?
+  cancelledAt        DateTime?
+  cancellationReason String?
+  completedAt        DateTime?
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
 
-  quantity              Float
-  unitPrice             Float
-  subtotal              Float
-  discount              Float
-  discountType          String   @default("FIXED")
-  discountDescription   String?
-  serviceCharge         Float    @default(0)
-  serviceChargeType     String   @default("FIXED")
-  serviceChargeDescription String?
-  deliveryFee           Float    @default(0)
-  deliveryZone          String?
-  tax                   Float    @default(0)
-  taxRate               Float    @default(0)
-  additionalFees        Float    @default(0)
-  totalAmount           Float
+  // Relations
+  customer      Customer               @relation(fields: [customerId], references: [id])
+  membership    KirchaGroupMembership? @relation(fields: [membershipId], references: [id])
+  group         KirchaGroup            @relation(fields: [groupId], references: [id])
+  payment       Payment?
+  refundRequest RefundRequest?
+  delivery      Delivery?
+  statusHistory OrderStatusHistory[]
 
-  status                String   @default("DRAFT")
-  createdBy             String?
-
-  deliveryAddressId     String?
-  deliveryAddress       CustomerAddress? @relation(fields: [deliveryAddressId], references: [id])
-  deliveryDate          DateTime?
-  deliveryTimeSlot      String?
-
-  paymentMethodId       String?
-  paymentMethod         PaymentMethod? @relation(fields: [paymentMethodId], references: [id])
-
-  expiryDate            DateTime?
-  isExpired             Boolean  @default(false)
-
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
-  cancelledAt           DateTime?
-  expiresAt             DateTime?
-
-  payment               Payment?
-  paymentAdvice         PaymentAdvice[]
-  delivery              Delivery?
-  refundRequests        RefundRequest[]
+  @@map("orders")
 }
 
+model OrderStatusHistory {
+  id         String      @id @default(cuid())
+  orderId    String
+  fromStatus OrderStatus
+  toStatus   OrderStatus
+  reason     String?
+  changedBy  String
+  createdAt  DateTime    @default(now())
+
+  // Relations
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@map("order_status_history")
+}
+
+// ============================================================
+// PAYMENTS
+// ============================================================
+
 model PaymentMethod {
-  id             String   @id @default(cuid())
-  name           String   @unique
-  nameAm         String?
+  id             String            @id @default(cuid())
+  name           String
+  nameAm         String
+  type           PaymentMethodType
   accountName    String
   accountNumber  String
   instructions   String?
   instructionsAm String?
   logoUrl        String?
-  active         Boolean  @default(true)
-  displayOrder   Int      @default(0)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  displayOrder   Int               @default(0)
+  isActive       Boolean           @default(true)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
 
-  payments       Payment[]
-  orders         Order[]
+  // Relations
+  payments Payment[]
+
+  @@map("payment_methods")
 }
 
 model Payment {
-  id                String   @id @default(cuid())
-  orderId           String   @unique
-  order             Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  amount            Float
-  paymentMethodId   String
-  paymentMethod     PaymentMethod @relation(fields: [paymentMethodId], references: [id])
-  status            String   @default("UNPAID")
-  adviceSubmittedAt DateTime?
-  verifiedAt        DateTime?
-  verifiedBy        String?
-  rejectionReason   String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  id              String        @id @default(cuid())
+  orderId         String        @unique
+  paymentMethodId String
+  amount          Decimal
+  status          PaymentStatus @default(PENDING)
+  paymentDeadline DateTime?
+  submittedAt     DateTime?
+  verifiedAt      DateTime?
+  verifiedBy      String?
+  rejectionReason String?
+  adminNote       String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
 
-  advices           PaymentAdvice[]
+  // Relations
+  order         Order                  @relation(fields: [orderId], references: [id])
+  paymentMethod PaymentMethod          @relation(fields: [paymentMethodId], references: [id])
+  advice        PaymentAdvice?
+  statusHistory PaymentStatusHistory[]
+
+  @@map("payments")
 }
 
 model PaymentAdvice {
-  id            String   @id @default(cuid())
-  paymentId     String
-  payment       Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
-  customerId    String
-  customer      Customer @relation(fields: [customerId], references: [id])
-  storageKey    String
-  url           String
-  mimeType      String
-  size          Int
-  uploadedAt    DateTime @default(now())
-  status        String   @default("SUBMITTED")
-  adminNote     String?
-  orderId       String?
-  order         Order?   @relation(fields: [orderId], references: [id])
+  id         String   @id @default(cuid())
+  paymentId  String   @unique
+  storageKey String
+  storageUrl String
+  mimeType   String
+  fileSize   Int
+  uploadedAt DateTime @default(now())
+  uploadedBy String
+
+  // Relations
+  payment  Payment  @relation(fields: [paymentId], references: [id])
+  customer Customer @relation(fields: [uploadedBy], references: [id])
+
+  @@map("payment_advices")
 }
+
+model PaymentStatusHistory {
+  id         String        @id @default(cuid())
+  paymentId  String
+  fromStatus PaymentStatus
+  toStatus   PaymentStatus
+  reason     String?
+  changedBy  String
+  createdAt  DateTime      @default(now())
+
+  // Relations
+  payment Payment @relation(fields: [paymentId], references: [id])
+
+  @@map("payment_status_history")
+}
+
+// ============================================================
+// REFUNDS
+// ============================================================
+
+model RefundRequest {
+  id                     String       @id @default(cuid())
+  refundNumber           String       @unique
+  orderId                String       @unique
+  customerId             String
+  originalAmount         Decimal
+  serviceChargeDeduction Decimal      @default(0)
+  penaltyAmount          Decimal      @default(0)
+  penaltyReason          String?
+  refundAmount           Decimal
+  bankName               String
+  accountName            String
+  accountNumber          String
+  status                 RefundStatus @default(PENDING)
+  adminNote              String?
+  adminActionAt          DateTime?
+  completedAt            DateTime?
+  paymentAdviceUrl       String?
+  paymentReference       String?
+  createdAt              DateTime     @default(now())
+  updatedAt              DateTime     @updatedAt
+
+  // Relations
+  order         Order                 @relation(fields: [orderId], references: [id])
+  customer      Customer              @relation(fields: [customerId], references: [id])
+  complaints    Complaint[]
+  statusHistory RefundStatusHistory[]
+
+  @@map("refund_requests")
+}
+
+model RefundStatusHistory {
+  id         String       @id @default(cuid())
+  refundId   String
+  fromStatus RefundStatus
+  toStatus   RefundStatus
+  reason     String?
+  changedBy  String
+  createdAt  DateTime     @default(now())
+
+  // Relations
+  refund RefundRequest @relation(fields: [refundId], references: [id])
+
+  @@map("refund_status_history")
+}
+
+// ============================================================
+// COMPLAINTS
+// ============================================================
+
+model Complaint {
+  id              String          @id @default(cuid())
+  complaintNumber String          @unique
+  refundId        String?
+  customerId      String
+  orderId         String?
+  message         String
+  imageUrl        String?
+  status          ComplaintStatus @default(OPEN)
+  adminResponse   String?
+  resolvedAt      DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  // Relations
+  refund   RefundRequest? @relation(fields: [refundId], references: [id])
+  customer Customer       @relation(fields: [customerId], references: [id])
+
+  @@map("complaints")
+}
+
+// ============================================================
+// DELIVERY
+// ============================================================
 
 model Delivery {
-  id                String   @id @default(cuid())
-  orderId           String   @unique
-  order             Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  assignedTo        String?
-  assignedAt        DateTime?
-  pickedUpAt        DateTime?
-  outForDeliveryAt  DateTime?
-  deliveredAt       DateTime?
-  failedAt          DateTime?
-  status            String   @default("UNASSIGNED")
-  notes             String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  id                  String         @id @default(cuid())
+  orderId             String         @unique
+  deliveryPersonId    String?
+  deliveryPersonName  String?
+  deliveryPersonPhone String?
+  vehicleInfo         String?
+  status              DeliveryStatus @default(UNASSIGNED)
+  assignedAt          DateTime?
+  pickedUpAt          DateTime?
+  outForDeliveryAt    DateTime?
+  deliveredAt         DateTime?
+  failedAt            DateTime?
+  failureReason       String?
+  deliveryNotes       String?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  // Relations
+  order         Order                   @relation(fields: [orderId], references: [id])
+  statusHistory DeliveryStatusHistory[]
+
+  @@map("deliveries")
 }
+
+model DeliveryStatusHistory {
+  id         String         @id @default(cuid())
+  deliveryId String
+  fromStatus DeliveryStatus
+  toStatus   DeliveryStatus
+  reason     String?
+  changedBy  String
+  createdAt  DateTime       @default(now())
+
+  // Relations
+  delivery Delivery @relation(fields: [deliveryId], references: [id])
+
+  @@map("delivery_status_history")
+}
+
+// ============================================================
+// CONFIGURATION
+// ============================================================
 
 model FeeConfiguration {
-  id                String   @id @default(cuid())
-  key               String   @unique
-  type              String
-  nameEn            String   @unique
-  nameAm            String
-  descriptionEn     String?
-  descriptionAm     String?
-  valueType         String
-  value             Float    @default(0)
-  minValue          Float?
-  maxValue          Float?
-  isActive          Boolean  @default(true)
-  priority          Int      @default(0)
-  applyTo           String   @default("ALL")
-  applyToId         String?
-  startDate         DateTime?
-  endDate           DateTime?
-  createdBy         String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-}
+  id        String   @id @default(cuid())
+  name      String
+  nameAm    String
+  type      String // percentage, fixed
+  value     Decimal
+  appliesTo String // subtotal, total, specific
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-model DeliveryZone {
-  id                String   @id @default(cuid())
-  nameEn            String   @unique
-  nameAm            String
-  fee               Float    @default(0)
-  minOrder          Float    @default(0)
-  maxOrder          Float?
-  isActive          Boolean  @default(true)
-  priority          Int      @default(0)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
-  deliveryCharges   DeliveryCharge[]
+  @@map("fee_configurations")
 }
 
 model ServiceCharge {
-  id                String   @id @default(cuid())
-  nameEn            String   @unique
-  nameAm            String
-  type              String
-  value             Float    @default(0)
-  descriptionEn     String?
-  descriptionAm     String?
-  applyTo           String   @default("ALL")
-  applyToId         String?
-  isActive          Boolean  @default(true)
-  priority          Int      @default(0)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  id        String   @id @default(cuid())
+  name      String
+  nameAm    String
+  type      String // percentage, fixed
+  value     Decimal
+  appliesTo String // subtotal, total
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("service_charges")
 }
 
-model DeliveryCharge {
-  id                String   @id @default(cuid())
-  zoneId            String?
-  zone              DeliveryZone? @relation(fields: [zoneId], references: [id])
-  baseFee           Float    @default(0)
-  perKmFee          Float    @default(0)
-  perKgFee          Float    @default(0)
-  minimumOrder      Float    @default(0)
-  maximumOrder      Float?
-  weightRangeStart  Float?
-  weightRangeEnd    Float?
-  distanceRangeStart Float?
-  distanceRangeEnd   Float?
-  isActive          Boolean  @default(true)
-  priority          Int      @default(0)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+model DeliveryZone {
+  id             String           @id @default(cuid())
+  name           String
+  nameAm         String
+  baseFee        Decimal
+  perKmFee       Decimal          @default(0)
+  perKgFee       Decimal          @default(0)
+  minFee         Decimal          @default(0)
+  isActive       Boolean          @default(true)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  DeliveryCharge DeliveryCharge[]
+
+  @@map("delivery_zones")
 }
 
-model RefundRequest {
-  id                String   @id @default(cuid())
-  orderId           String
-  order             Order    @relation(fields: [orderId], references: [id])
-  customerId        String
-  customer          Customer @relation(fields: [customerId], references: [id])
-  membershipId      String?
-  membership        KirchaGroupMembership? @relation(fields: [membershipId], references: [id])
-
-  originalAmount    Float
-  serviceCharge     Float    @default(0)
-  penaltyAmount     Float    @default(0)
-  refundAmount      Float
-  penaltyReason     String?
-
-  bankName          String?
-  accountName       String?
-  accountNumber     String?
-
-  status            String   @default("PENDING")
-  adminNote         String?
-  adminActionAt     DateTime?
-  completedAt       DateTime?
-
-  paymentAdviceUrl  String?
-
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
-  complaints        Complaint[]
-}
-
-model Complaint {
-  id                String   @id @default(cuid())
-  refundRequestId   String
-  refundRequest     RefundRequest @relation(fields: [refundRequestId], references: [id])
-  customerId        String
-  customer          Customer @relation(fields: [customerId], references: [id])
-  message           String
-  imageUrl          String?
-  status            String   @default("OPEN")
-  adminResponse     String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-}
-
-model SystemSetting {
-  id          String   @id @default(cuid())
-  key         String   @unique
-  value       String
-  description String?
-  updatedAt   DateTime @updatedAt
-}
+// ============================================================
+// LEGAL & TERMS
+// ============================================================
 
 model TermsVersion {
   id            String   @id @default(cuid())
   version       String   @unique
-  titleEn       String
-  titleAm       String
   contentEn     String
   contentAm     String
-  effectiveFrom DateTime @default(now())
-  isActive      Boolean  @default(false)
+  effectiveDate DateTime
+  isCurrent     Boolean  @default(false)
+  publishedBy   String
   createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  acceptances   UserLegalAcceptance[]
+  // Relations
+  acceptances UserLegalAcceptance[]
+
+  @@map("terms_versions")
 }
 
 model PrivacyPolicyVersion {
@@ -452,122 +668,392 @@ model PrivacyPolicyVersion {
   version       String   @unique
   contentEn     String
   contentAm     String
-  effectiveFrom DateTime @default(now())
-  isActive      Boolean  @default(false)
+  effectiveDate DateTime
+  isCurrent     Boolean  @default(false)
+  publishedBy   String
   createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  acceptances   UserLegalAcceptance[]
+  // Relations
+  acceptances UserLegalAcceptance[]
+
+  @@map("privacy_policy_versions")
 }
 
 model UserLegalAcceptance {
-  id                String   @id @default(cuid())
-  userId            String
-  user              User     @relation(fields: [userId], references: [id])
-  customerId        String?
-  customer          Customer? @relation(fields: [customerId], references: [id])
-  termsVersionId    String
-  termsVersion      TermsVersion @relation(fields: [termsVersionId], references: [id])
-  privacyVersionId  String
-  privacyVersion    PrivacyPolicyVersion @relation(fields: [privacyVersionId], references: [id])
-  languageUsed      String   @default("en")
-  telegramUserId    String
-  ipAddress         String?
-  userAgent         String?
-  acceptedAt        DateTime @default(now())
+  id               String   @id @default(cuid())
+  userId           String
+  termsVersionId   String?
+  privacyVersionId String?
+  acceptedAt       DateTime @default(now())
+  ipAddress        String?
+  userAgent        String?
+
+  // Relations
+  user           User                  @relation(fields: [userId], references: [id])
+  termsVersion   TermsVersion?         @relation(fields: [termsVersionId], references: [id])
+  privacyVersion PrivacyPolicyVersion? @relation(fields: [privacyVersionId], references: [id])
+
+  @@map("user_legal_acceptances")
 }
+
+// ============================================================
+// SUPPORT & FAQ
+// ============================================================
 
 model FAQ {
-  id          String   @id @default(cuid())
-  order       Int      @default(0)
-  questionEn  String
-  questionAm  String
-  answerEn    String
-  answerAm    String
-  active      Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-}
+  id           String   @id @default(cuid())
+  category     String
+  questionEn   String
+  questionAm   String
+  answerEn     String
+  answerAm     String
+  displayOrder Int      @default(0)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-model Notification {
-  id          String   @id @default(cuid())
-  customerId  String
-  customer    Customer @relation(fields: [customerId], references: [id])
-  type        String
-  title       String
-  body        String
-  data        String?
-  read        Boolean  @default(false)
-  sentAt      DateTime @default(now())
-  deliveredAt DateTime?
+  @@map("faqs")
 }
 
 model SupportRequest {
-  id          String   @id @default(cuid())
-  customerId  String
-  customer    Customer @relation(fields: [customerId], references: [id])
-  orderId     String?
-  category    String
-  message     String
-  status      String   @default("OPEN")
-  assignedTo  String?
-  resolvedAt  DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id           String    @id @default(cuid())
+  ticketNumber String    @unique
+  customerId   String
+  userId       String
+  category     String
+  subject      String
+  message      String
+  status       String    @default("OPEN")
+  priority     String    @default("NORMAL")
+  assignedTo   String?
+  resolvedAt   DateTime?
+  resolvedBy   String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  // Relations
+  customer Customer @relation(fields: [customerId], references: [id], name: "CustomerTickets")
+  user     User     @relation(fields: [userId], references: [id], name: "UserTickets")
+
+  @@map("support_requests")
 }
 
-model BannedUser {
+// ============================================================
+// SYSTEM
+// ============================================================
+
+model SystemSetting {
   id          String   @id @default(cuid())
-  telegramId  String   @unique
-  reason      String?
-  bannedBy    String
-  bannedAt    DateTime @default(now())
-  expiresAt   DateTime?
-  active      Boolean  @default(true)
-  notes       String?
+  key         String   @unique
+  value       String
+  type        String // string, number, boolean, json
+  description String?
+  category    String
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("system_settings")
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  type      String
+  title     String
+  message   String
+  data      Json?
+  isRead    Boolean   @default(false)
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], name: "UserNotifications")
+
+  @@map("notifications")
 }
 
 model BulkMessage {
-  id          String   @id @default(cuid())
-  title       String
-  message     String
-  target      String
-  targetId    String?
+  id          String    @id @default(cuid())
+  subject     String
+  content     String
+  contentAm   String?
+  recipients  String[] // ALL, ACTIVE, GROUP_MEMBERS, PENDING_PAYMENT
+  filters     Json?
   sentBy      String
-  sentAt      DateTime @default(now())
-  deliveredCount Int   @default(0)
-  failedCount     Int   @default(0)
-  status      String   @default("PENDING")
+  sentAt      DateTime?
+  totalSent   Int       @default(0)
+  totalFailed Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relations
+  recipients_detail BulkMessageRecipient[]
+
+  @@map("bulk_messages")
 }
 
 model BulkMessageRecipient {
-  id          String   @id @default(cuid())
-  messageId   String
-  customerId  String
-  deliveredAt DateTime?
-  readAt      DateTime?
-  status      String   @default("PENDING")
+  id            String    @id @default(cuid())
+  bulkMessageId String
+  userId        String
+  status        String // PENDING, SENT, FAILED
+  error         String?
+  sentAt        DateTime?
+  createdAt     DateTime  @default(now())
+
+  // Relations
+  bulkMessage BulkMessage @relation(fields: [bulkMessageId], references: [id])
+  user        User        @relation(fields: [userId], references: [id])
+
+  @@map("bulk_message_recipients")
 }
 
-model AuditLog {
-  id          String   @id @default(cuid())
-  actorId     String
-  actorRole   String
-  actorName   String?
-  action      String
-  entity      String
-  entityId    String
-  before      String?
-  after       String?
-  ip          String?
-  userAgent   String?
-  metadata    String?
-  createdAt   DateTime @default(now())
-}
+// ============================================================
+// AUDIT
+// ============================================================
 
 model IdempotencyKey {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  response  Json
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@map("idempotency_keys")
+}
+
+// ============================================================
+// AUDIT
+// ============================================================
+//
+// Audit design:
+// - userId identifies the actor performing the action.
+// - entityType identifies the affected entity type.
+// - entityId identifies the affected record.
+//
+// entityId is intentionally NOT a Prisma foreign key because
+// this is a polymorphic audit target. For example:
+//
+//   entityType = "CUSTOMER" and entityId = Customer.id
+//   entityType = "ORDER"    and entityId = Order.id
+//   entityType = "PAYMENT"  and entityId = Payment.id
+//   entityType = "REFUND"   and entityId = RefundRequest.id
+//   entityType = "GROUP"    and entityId = KirchaGroup.id
+//
+// ============================================================
+
+model AuditLog {
+  id String @id @default(cuid())
+
+  // Actor
+  userId   String?
+  username String?
+  role     String?
+
+  // Action
+  action String
+
+  // Polymorphic target
+  entityType String
+  entityId   String?
+
+  // Change information
+  oldValue Json?
+  newValue Json?
+  changes  Json?
+
+  // Request information
+  ipAddress String?
+  userAgent String?
+
+  // Additional information
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  // Actor relation
+  user User? @relation("UserAudit", fields: [userId], references: [id])
+
+  // Indexes
+  @@index([userId])
+  @@index([entityType, entityId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model AdminNotification {
+  id              String    @id @default(cuid())
+  type            String
+  title           String
+  titleAm         String?
+  body            String
+  bodyAm          String?
+  data            Json?
+  relatedEntity   String?
+  relatedEntityId String?
+  isRead          Boolean   @default(false)
+  readAt          DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@map("admin_notifications")
+}
+
+model Settings {
   id          String   @id @default(cuid())
   key         String   @unique
-  response    String
-  expiresAt   DateTime
+  value       String
+  type        String   @default("string")
+  category    String   @default("general")
+  description String?
+  isActive    Boolean  @default(true)
+  isDeletable Boolean  @default(true)
+  createdBy   String?
   createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("settings")
+}
+
+model About {
+  id           String   @id @default(cuid())
+  title        String   @default("Ale Kircha")
+  content      String   @default("Ale Kircha - Digital meat sharing platform")
+  phone        String?
+  email        String?
+  address      String?
+  addressAm    String?
+  workingHours String?
+  telegram     String?
+  website      String?
+  logoUrl      String?
+  updatedAt    DateTime @updatedAt
+
+  @@map("about")
+}
+
+model ContactInfo {
+  id           String   @id @default(cuid())
+  type         String // phone, email, address, telegram, social
+  labelEn      String
+  labelAm      String
+  value        String
+  displayOrder Int      @default(0)
+  isActive     Boolean  @default(true)
+  isDeletable  Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("contact_info")
+}
+
+model GroupRules {
+  id            String   @id @default(cuid())
+  ruleKey       String   @unique
+  ruleValue     String
+  descriptionEn String?
+  descriptionAm String?
+  isActive      Boolean  @default(true)
+  isDeletable   Boolean  @default(true)
+  updatedAt     DateTime @updatedAt
+
+  @@map("group_rules")
+}
+
+model RefundFee {
+  id          String   @id @default(cuid())
+  nameEn      String
+  nameAm      String
+  type        String // percentage, fixed
+  value       Decimal  @db.Decimal(10, 2)
+  minAmount   Decimal? @db.Decimal(10, 2)
+  maxAmount   Decimal? @db.Decimal(10, 2)
+  appliesTo   String   @default("all")
+  isActive    Boolean  @default(true)
+  isDeletable Boolean  @default(true)
+  createdBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("refund_fees")
+}
+
+model Discount {
+  id          String    @id @default(cuid())
+  nameEn      String
+  nameAm      String
+  type        String // percentage, fixed
+  value       Decimal   @db.Decimal(10, 2)
+  minOrder    Decimal   @default(0) @db.Decimal(10, 2)
+  maxDiscount Decimal?  @db.Decimal(10, 2)
+  appliesTo   String    @default("all")
+  startDate   DateTime?
+  endDate     DateTime?
+  isActive    Boolean   @default(true)
+  isDeletable Boolean   @default(true)
+  createdBy   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@map("discounts")
+}
+
+model DeliveryCharge {
+  id                 String   @id @default(cuid())
+  zoneId             String?
+  nameEn             String?
+  nameAm             String?
+  baseFee            Decimal  @default(0) @db.Decimal(10, 2)
+  perKmFee           Decimal  @default(0) @db.Decimal(10, 2)
+  perKgFee           Decimal  @default(0) @db.Decimal(10, 2)
+  minimumOrder       Decimal  @default(0) @db.Decimal(10, 2)
+  maximumOrder       Decimal? @db.Decimal(10, 2)
+  weightRangeStart   Decimal? @db.Decimal(10, 2)
+  weightRangeEnd     Decimal? @db.Decimal(10, 2)
+  distanceRangeStart Decimal? @db.Decimal(10, 2)
+  distanceRangeEnd   Decimal? @db.Decimal(10, 2)
+  isActive           Boolean  @default(true)
+  isDeletable        Boolean  @default(true)
+  priority           Int      @default(0)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  zone DeliveryZone? @relation(fields: [zoneId], references: [id])
+
+  @@map("delivery_charges")
+}
+
+model BankAccount {
+  id            String   @id @default(cuid())
+  bankNameEn    String
+  bankNameAm    String
+  accountName   String
+  accountNumber String
+  branch        String?
+  accountType   String   @default("checking")
+  isActive      Boolean  @default(true)
+  isDefault     Boolean  @default(false)
+  displayOrder  Int      @default(0)
+  createdBy     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("bank_accounts")
+}
+
+model SelfHelp {
+  id           String   @id @default(cuid())
+  titleEn      String
+  titleAm      String
+  contentEn    String
+  contentAm    String
+  category     String   @default("general")
+  displayOrder Int      @default(0)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("self_help")
 }
